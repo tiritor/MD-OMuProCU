@@ -1,0 +1,208 @@
+id: 42 # ID
+name: TDC-Test
+
+TDCs:
+  - deviceName: s2
+    manifest:
+      name: TDC-Test
+      TCD: # Tenant CNF Definition
+        kubernetesDeployment: # Kubernetes Deployment
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            labels:
+              app: ubuntu
+            name: debian24-deployment
+            namespace: test
+          spec:
+            replicas: 3
+            selector:
+              matchLabels:
+                app: ubuntu
+            template:
+              metadata:
+                labels:
+                  app: ubuntu
+              spec:
+                containers:
+                - command:
+                  - sleep
+                  - 3650d
+                  image: debian:bullseye
+                  name: python3-test
+                  ports:
+                  - containerPort: 80
+        acceleratorType: tofino
+      TIL: # Tenant Isolation Logic
+        accessRules: 
+          VNI: 43 # Number | List
+        countermeasureRules:
+          defaultAction: accept # Enum of {accept, drop, soft, hard}
+          rules:
+            - vni: 43
+              src_ip: 192.168.42.10
+              dst_ip: 172.16.22.5
+              src_port: 4545
+              dst_port: 4242
+              ip_proto: 7
+              action: "drop"
+        runtimeRules: # Rules for tables which are deployed in the tenant in-network code 
+          - mode: 'table_add'
+            table: 'TestIngress.test_table' # table name with start point in its p4 code!
+            actionName: 'TestIngress.CheckFeature' # action name with start point in its p4 code!
+            match: "{'meta.feature_meta.node_id': 0, 'meta.feature_meta.prevFeature': 0, 'meta.feature_meta.isTrue': 1}" # match with start point in its p4 code!
+            actionParams: "{'node_id': 1, 'f_inout': 1, 'threshold': 64}" # action params with start point in its p4 code!
+      INC: # in-network code of tenant 
+        p4Code: |
+          /*************************************************************************
+          ************************* C O N T R O L **********************************
+          *************************************************************************/
+
+          #ifndef __TestIngress_42__
+          #define __TestIngress_42__
+
+          control TestIngress(inout headers_t hdr,
+                                inout metadata_t meta,
+                                in ingress_intrinsic_metadata_t ig_intr_md) {
+          
+          Counter<bit<32>,bit<32>>(4, CounterType_t.PACKETS) test_counter;
+
+          action CheckFeature(bit<16> node_id, bit<16> f_inout, bit<64> threshold) {
+              // For features with division multiplication with one feature part is done
+              bit<64> math = (bit<64>) node_id + (bit<64>) f_inout + threshold;
+              // log_msg("Node: {}, Class: {}, Threshold: {}", {(bit<32>) meta.feature_meta.node_id, class, threshold});
+          }
+
+          action SetClass(bit<16> node_id, bit<16> class, bit<64> probability) {
+            meta.feature_meta.class = class;
+            meta.feature_meta.node_id = node_id; // just for debugging otherwise not needed
+            meta.feature_meta.probability = probability; 
+            // log_msg("Node: {}, Class: {}, Prob: {}", {(bit<32>) meta.feature_meta.node_id, class, probability});
+          }
+
+
+          table test_table {
+              actions = {
+                  NoAction;
+                  CheckFeature;
+                  SetClass;
+              }
+              key = {
+                  meta.feature_meta.node_id:   exact;
+                  meta.feature_meta.prevFeature: exact;
+                  meta.feature_meta.isTrue: exact;
+              }
+              size = 1;
+              // default_action = _drop;
+          }
+
+            apply {
+              test_counter.count(0);
+              test_table.apply();
+              // log_msg("Tenant43");
+            }
+          }
+          #endif // __TestIngress_42__
+        mainIngressName: TestIngress
+  - deviceName: s4
+    manifest:
+      name: TDC-Test
+      TCD: # Tenant CNF Definition
+        kubernetesDeployment: # Kubernetes Deployment
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            labels:
+              app: ubuntu
+            name: debian24-deployment
+            namespace: test
+          spec:
+            replicas: 3
+            selector:
+              matchLabels:
+                app: ubuntu
+            template:
+              metadata:
+                labels:
+                  app: ubuntu
+              spec:
+                containers:
+                - command:
+                  - sleep
+                  - 3650d
+                  image: debian:bullseye
+                  name: python3-test
+                  ports:
+                  - containerPort: 80
+        acceleratorType: tofino
+      TIL: # Tenant Isolation Logic
+        accessRules: 
+          VNI: 43 # Number | List
+        countermeasureRules:
+          defaultAction: accept # Enum of {accept, drop, soft, hard}
+          rules:
+            - vni: 43
+              src_ip: 192.168.42.10
+              dst_ip: 172.16.22.5
+              src_port: 4545
+              dst_port: 4242
+              ip_proto: 7
+              action: "drop"
+        runtimeRules: # Rules for tables which are deployed in the tenant in-network code 
+          - mode: 'table_add'
+            table: 'TestIngress.test_table' # table name with start point in its p4 code!
+            actionName: 'TestIngress.CheckFeature' # action name with start point in its p4 code!
+            match: "{'meta.feature_meta.node_id': 0, 'meta.feature_meta.prevFeature': 0, 'meta.feature_meta.isTrue': 1}" # match with start point in its p4 code! 
+            actionParams: "{'node_id': 1, 'f_inout': 1, 'threshold': 64}" # action params with start point in its p4 code!
+      INC: # in-network code of tenant
+        p4Code: |
+          /*************************************************************************
+          ************************* C O N T R O L **********************************
+          *************************************************************************/
+
+          #ifndef __TestIngress_42__
+          #define __TestIngress_42__
+
+          control TestIngress(inout headers_t hdr,
+                                inout metadata_t meta,
+                                in ingress_intrinsic_metadata_t ig_intr_md) {
+          
+          Counter<bit<32>,bit<32>>(4, CounterType_t.PACKETS) test_counter;
+
+          action CheckFeature(bit<16> node_id, bit<16> f_inout, bit<64> threshold) {
+              // For features with division multiplication with one feature part is done
+              bit<64> math = (bit<64>) node_id + (bit<64>) f_inout + threshold;
+              // log_msg("Node: {}, Class: {}, Threshold: {}", {(bit<32>) meta.feature_meta.node_id, class, threshold});
+          }
+
+          action SetClass(bit<16> node_id, bit<16> class, bit<64> probability) {
+            meta.feature_meta.class = class;
+            meta.feature_meta.node_id = node_id; // just for debugging otherwise not needed
+            meta.feature_meta.probability = probability; 
+            // log_msg("Node: {}, Class: {}, Prob: {}", {(bit<32>) meta.feature_meta.node_id, class, probability});
+          }
+
+
+          table test_table {
+              actions = {
+                  NoAction;
+                  CheckFeature;
+                  SetClass;
+              }
+              key = {
+                  meta.feature_meta.node_id:   exact;
+                  meta.feature_meta.prevFeature: exact;
+                  meta.feature_meta.isTrue: exact;
+              }
+              size = 1;
+              // default_action = _drop;
+          }
+
+            apply {
+              test_counter.count(0);
+              test_table.apply();
+              // log_msg("Tenant43");
+            }
+          }
+          #endif // __TestIngress_42__
+        mainIngressName: TestIngress

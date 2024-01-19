@@ -1,0 +1,58 @@
+{
+  "42": {
+    "Name": "Tenant_A",
+    "Allowed_VNIs": [
+      43
+    ],
+    "devices": {
+      "default": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      },
+      "s1": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      },
+      "s2": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      },
+      "s3": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      },
+      "s4": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      }
+    }
+  },
+  "43": {
+    "Name": "Tenant_B",
+    "Allowed_VNIs": [
+      42
+    ],
+    "devices": {
+      "default": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      },
+      "s1": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      },
+      "s2": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      },
+      "s3": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      },
+      "s4": {
+        "Deployed_TDC_Names": [],
+        "mainIngressNames": []
+      }
+    }
+  }
+}

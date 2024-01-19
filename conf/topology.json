@@ -1,0 +1,351 @@
+{
+    "devices": {
+        "endpoint1": {
+            "category": "endpoint",
+            "connections": [
+                {
+                    "src_port": 1,
+                    "dest_port": 34,
+                    "src_dp_port": null,
+                    "dest_dp_port": 145,
+                    "weight": 1,
+                    "speed": "10G",
+                    "fec": "NONE",
+                    "an": null,
+                    "enabled": true,
+                    "dest_device": "s1"
+                }
+            ]
+        },
+        "endpoint2": {
+            "category": "endpoint",
+            "connections": [
+                {
+                    "src_port": 1,
+                    "dest_port": 34,
+                    "src_dp_port": null,
+                    "dest_dp_port": 145,
+                    "weight": 1,
+                    "speed": "10G",
+                    "fec": "NONE",
+                    "an": null,
+                    "enabled": true,
+                    "dest_device": "s3"
+                }
+            ]
+        },
+        
+        "s1": {
+            "category": "edge",
+            "OMuProCUAddress": "1.2.3.4:49055",
+            "OMuProCU-TIFAddress": "1.2.3.4:49049",
+            "OMuProCUEnabled": true,
+            "lag_ecmp_groups": {
+                "lag_1": {
+                    "id": 2000,
+                    "memberbase": 200000,
+                    "dpPorts": [
+                        {
+                            "portId": 44, 
+                            "active": true
+                        },
+                        {
+                            "portId": 144,
+                            "active": true
+                        }
+                    ]
+                },
+                "lag_2": {
+                    "id": 2001,
+                    "memberbase": 100000,
+                    "dpPorts": [
+                        {
+                            "portId": 145,
+                            "active": true
+                        }
+                    ]
+                }
+            },
+            "nexthop_map": {
+                "default" : 100,
+                "lag_1" : 100,
+                "lag_2" : 101
+            },
+            "ipv4_host_entries":[
+                {
+                    "ip": "10.100.0.102",
+                    "nexthop_id": 101
+                }                
+            ],
+            "arp_table_host_entries": [
+                {
+                    "ip": "10.100.0.102",
+                    "nexthop_id": 101
+                }
+            ],
+            "connections": 
+                [
+                    {
+                        "src_port": 17,
+                        "dest_port": 18,
+                        "src_dp_port": 44,
+                        "dest_dp_port": 45,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": true,
+                        "dest_device": "s2"
+                    },
+                    {
+                        "src_port": 18,
+                        "dest_port": 18,
+                        "src_dp_port": 45,
+                        "dest_dp_port": 45,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": false,
+                        "dest_device": "s4"
+                    },
+                    {
+                        "src_port": 33,
+                        "dest_port": 34,
+                        "src_dp_port": 144,
+                        "dest_dp_port": 145,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": true,
+                        "dest_device": "s4"
+                    },
+                    {
+                        "src_port": 34,
+                        "dest_port": 1,
+                        "src_dp_port": 145,
+                        "dest_dp_port": null,
+                        "weight": 1,
+                        "speed": "10G",
+                        "fec": "NONE",
+                        "an": 2,
+                        "enabled": true,
+                        "dest_device": "endpoint1"
+                    }
+                ]
+        },
+        "s2": {
+            "category": "datacenter",
+            "OMuProCUAddress": "1.2.3.5:49055",
+            "OMuProCU-TIFAddress": "1.2.3.5:49049",
+            "OMuProCUEnabled": true,
+            "lag_ecmp_groups": {
+            },
+            "nexthop_map": {
+                "default" : 100
+            },
+            "ipv4_host_entries":[
+                
+            ],
+            "arp_table_host_entries": [
+                
+            ],
+            "connections": 
+                [
+                    {
+                        "src_port": 18,
+                        "dest_port": 17,
+                        "src_dp_port": 45,
+                        "dest_dp_port": 44,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": true,
+                        "dest_device": "s1"
+                    },
+                    {
+                        "src_port": 17,
+                        "dest_port": 18,
+                        "src_dp_port": 44,
+                        "dest_dp_port": 45,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": true,
+                        "dest_device": "s3"
+                    }
+                ]
+        },
+        "s3": {
+            "category": "edge",
+            "OMuProCUAddress": "1.2.3.6:49055",
+            "OMuProCU-TIFAddress": "1.2.3.6:49049",
+            "OMuProCUEnabled": true,
+            "lag_ecmp_groups": {
+                "lag_1": {
+                    "id": 2000,
+                    "memberbase": 200000,
+                    "dpPorts": [
+                        {
+                            "portId": 45, 
+                            "active": true
+                        },
+                        {
+                            "portId": 144,
+                            "active": true
+                        }
+                    ]
+                },
+                "lag_2": {
+                    "id": 2001,
+                    "memberbase": 100000,
+                    "dpPorts": [
+                        {
+                            "portId": 145,
+                            "active": true
+                        }
+                    ]
+                }
+            },
+            "nexthop_map": {
+                "default" : 100,
+                "lag_1" : 100,
+                "lag_2" : 101
+            },
+            "ipv4_host_entries":[
+                {
+                    "ip": "10.100.0.101",
+                    "nexthop_id": 101
+                }                
+            ],
+            "arp_table_host_entries": [
+                {
+                    "ip": "10.100.0.101",
+                    "nexthop_id": 101
+                }
+            ],
+            "connections": 
+                [
+                    {
+                        "src_port": 18,
+                        "dest_port": 17,
+                        "src_dp_port": 45,
+                        "dest_dp_port": 44,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": true,
+                        "dest_device": "s2"
+                    },
+                    {
+                        "src_port": 17,
+                        "dest_port": 17,
+                        "src_dp_port": 44,
+                        "dest_dp_port": 44,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": false,
+                        "dest_device": "s4"
+                    },
+                    {
+                        "src_port": 33,
+                        "dest_port": 33,
+                        "src_dp_port": 144,
+                        "dest_dp_port": 144,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": true,
+                        "dest_device": "s4"
+                    },
+                    {
+                        "src_port": 34,
+                        "dest_port": 1,
+                        "src_dp_port": 145,
+                        "dest_dp_port": null,
+                        "enabled": true,
+                        "weight": 1,
+                        "speed": "10G",
+                        "fec": "NONE",
+                        "an": 2,
+                        "dest_device": "endpoint2"
+                    }
+                ]
+        },
+        "s4": {
+            "category": "datacenter",
+            "OMuProCUAddress": "1.2.3.6:49055",
+            "OMuProCU-TIFAddress": "1.2.3.6:49049",
+            "OMuProCUEnabled": true,
+            "lag_ecmp_groups": {
+            },
+            "nexthop_map": {
+                "default" : 100
+            },
+            "ipv4_host_entries":[
+                
+            ],
+            "arp_table_host_entries": [
+                
+            ],
+            "connections": 
+                [
+                    {
+                        "src_port": 18,
+                        "dest_port": 18,
+                        "src_dp_port": 45,
+                        "dest_dp_port": 45,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": false,
+                        "dest_device": "s1"
+                    },
+                    {
+                        "src_port": 34,
+                        "dest_port": 33,
+                        "src_dp_port": 145,
+                        "dest_dp_port": 144,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "enabled": true,
+                        "dest_device": "s1"
+                    },
+                    {
+                        "src_port": 17,
+                        "dest_port": 17,
+                        "src_dp_port": 44,
+                        "dest_dp_port": 44,
+                        "enabled": false,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "dest_device": "s3"
+                    },
+                    {
+                        "src_port": 33,
+                        "dest_port": 33,
+                        "src_dp_port": 144,
+                        "dest_dp_port": 144,
+                        "enabled": true,
+                        "weight": 1,
+                        "speed": "25G",
+                        "fec": "RS",
+                        "an": 1,
+                        "dest_device": "s3"
+                    }                    
+                ]
+        }
+    }
+}

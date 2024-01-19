@@ -1,0 +1,10 @@
+from update_strategy import UpdateStrategy
+
+
+DEPLOYMENT_ADDRESS = "0.0.0.0:49009"
+GLOBALVIEW_ADDRESS = "0.0.0.0:49009"
+
+
+INFRASTRUCTURE_FILE_PATH = "conf/topology.json"
+
+UPDATE_ORDER_STRATEGY = UpdateStrategy.DATACENTER_DEVICES_FIRST
