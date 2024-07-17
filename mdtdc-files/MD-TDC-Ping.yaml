@@ -1,0 +1,271 @@
+id: 43 # ID
+name: PINGER
+
+TDCs:
+  - deviceName: s2
+    manifest:
+      name: PINGER
+      TCD: # Tenant CNF Definition
+        kubernetesDeployment: # Kubernetes Deployment
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            labels:
+              app: ubuntu
+            name: debian24-deployment
+            namespace: test
+          spec:
+            replicas: 3
+            selector:
+              matchLabels:
+                app: ubuntu
+            template:
+              metadata:
+                labels:
+                  app: ubuntu
+              spec:
+                containers:
+                - command:
+                  - sleep
+                  - 3650d
+                  image: debian:bullseye
+                  name: python3-test
+                  ports:
+                  - containerPort: 80
+        acceleratorType: tofino
+      TIL: # Tenant Isolation Logic
+        accessRules: 
+          VNI: 42 # Number | List
+        countermeasureRules:
+          defaultAction: accept # Enum of {accept, drop, soft, hard}
+          rules: []
+        runtimeRules: # Rules for tables which are deployed in the tenant in-network code 
+          # - mode: 'table_add'
+          #   table: 'PingerIngress.listenerIps' # table name with start point in its p4 code!
+          #   actionName: 'NoAction' # action name with start point in its p4 code!
+          #   match: "{'hdr.inner_ipv4.dstAddr': '192.168.42.42'}" # match with start point in its p4 code! 
+          #   # match: "{'hdr.inner_ipv4.dstAddr': '10.100.0.200'}" # match with start point in its p4 code! 
+          #  actionParams: "{}" # action params with start point in its p4 code!
+          - mode: 'table_add'
+            table: 'PingerIngress.vxlanIps' # table name with start point in its p4 code!
+            actionName: 'send_vxlan_reply' # action name with start point in its p4 code!
+            match: "{'hdr.ipv4.dstAddr': '10.100.0.200'}" # match with start point in its p4 code! 
+            # match: "{'hdr.inner_ipv4.dstAddr': '10.100.0.200'}" # match with start point in its p4 code! 
+            actionParams: "{}" # action params with start point in its p4 code!
+          - mode: 'table_add'
+            table: 'PingerIngress.listenerMAC' # table name with start point in its p4 code!
+            actionName: 'NoAction' # action name with start point in its p4 code!
+            match: "{'hdr.inner_ethernet.dstAddr': 'AA:AA:AA:AA:AA:AA'}" # match with start point in its p4 code! 
+            actionParams: "{}" # action params with start point in its p4 code!
+          - mode: 'table_add'
+            table: 'PingerIngress.listenerMAC' # table name with start point in its p4 code!
+            actionName: 'NoAction' # action name with start point in its p4 code!
+            match: "{'hdr.inner_ethernet.dstAddr': 'FF:FF:FF:FF:FF:FF'}" # match with start point in its p4 code! 
+            actionParams: "{}" # action params with start point in its p4 code!
+      INC: # in-network code of tenant 
+        p4Code: |
+          /*************************************************************************
+          ************************* C O N T R O L **********************************
+          *************************************************************************/
+
+          #ifndef __PINGER__
+          #define __PINGER__
+
+          #define PINGER_HOST_IP_ADDRESS  0x0A6400C8 // 10.100.0.200
+          #define PINGER_IP_ADDRESS       0xC0A82A2A // 192.168.42.42
+          #define PINGER_MAC_ADDRESS      0xAAAAAAAAAAAA // AA:AA:AA:AA:AA:AA
+          #define PINGER_HOST_MAC_ADDRESS 0xBBBBBBBBBBBB // BB:BB:BB:BB:BB:BB
+
+          control PingerIngress(inout headers_t hdr,
+                                inout metadata_t meta,
+                                in ingress_intrinsic_metadata_t ig_intr_md, 
+                                inout ingress_intrinsic_metadata_for_tm_t ig_tm_md) {
+
+              const bit<16> ARP_OPCODE_REQUEST = 1;
+              const bit<16> ARP_OPCODE_REPLY = 2;
+
+              DirectCounter<bit<32>>(CounterType_t.PACKETS) debug_counter;
+              DirectCounter<bit<32>>(CounterType_t.PACKETS) debug2_counter;
+              DirectCounter<bit<32>>(CounterType_t.PACKETS) debug3_counter;
+
+              action send_back() {
+                  ig_tm_md.ucast_egress_port = ig_intr_md.ingress_port;
+              }
+
+              action send_ping_reply() {
+                  debug2_counter.count();
+                  mac_address_t eth = hdr.inner_ethernet.src_addr;
+                  hdr.inner_ethernet.src_addr = hdr.inner_ethernet.dst_addr;
+                  hdr.inner_ethernet.dst_addr = eth;
+
+                  hdr.inner_ipv4.ttl = hdr.inner_ipv4.ttl - 1;
+                  ipv4_address_t ip = hdr.inner_ipv4.src_addr;
+                  hdr.inner_ipv4.src_addr = hdr.inner_ipv4.dst_addr;
+                  hdr.inner_ipv4.dst_addr = ip;
+
+                  hdr.inner_icmp.type = 0;
+                  hdr.inner_icmp.code = 0;
+                  hdr.inner_icmp.checksum = 0;
+
+                  send_back();
+              }
+
+              action send_arp_reply() {
+                  debug_counter.count();
+                  hdr.arp.op = ARP_OPCODE_REPLY;
+                  // mac_address_t mac = hdr.arp.dstHwAddr;
+                  hdr.arp.targetHwAddr = hdr.arp.srcHwAddr;
+                  hdr.arp.srcHwAddr = PINGER_MAC_ADDRESS;
+
+                  hdr.ethernet.dst_addr = hdr.ethernet.src_addr;
+                  hdr.ethernet.src_addr = PINGER_MAC_ADDRESS;
+                  
+                  ipv4_address_t ip = hdr.arp.targetIpAddr;
+                  hdr.arp.targetIpAddr = hdr.arp.srcIpAddr;
+                  hdr.arp.srcIpAddr = ip;
+
+                  send_back();
+              }
+
+              action send_inner_arp_reply() {
+                  debug_counter.count();
+                  hdr.inner_arp.op = ARP_OPCODE_REPLY;
+                  // mac_address_t mac = hdr.inner_arp.dstHwAddr;
+                  hdr.inner_arp.targetHwAddr = hdr.inner_arp.srcHwAddr;
+                  hdr.inner_arp.srcHwAddr = PINGER_MAC_ADDRESS;
+
+                  hdr.inner_ethernet.dst_addr = hdr.inner_ethernet.src_addr;
+                  hdr.inner_ethernet.src_addr = PINGER_MAC_ADDRESS;
+                  
+                  ipv4_address_t ip = hdr.inner_arp.targetIpAddr;
+                  hdr.inner_arp.targetIpAddr = hdr.inner_arp.srcIpAddr;
+                  hdr.inner_arp.srcIpAddr = ip;
+
+                  send_back();
+              }
+
+              action send_vxlan_reply () {
+                  // hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+                  debug3_counter.count();
+                  ipv4_address_t ip = hdr.ipv4.src_addr;
+                  hdr.ipv4.src_addr = hdr.ipv4.dst_addr;
+                  hdr.ipv4.dst_addr = ip;
+                  hdr.udp.checksum = 0;
+                  hdr.udp.src_port = 45875;
+                  hdr.udp.dst_port = 4789;
+                  
+                  mac_address_t eth = hdr.ethernet.src_addr;
+                  hdr.ethernet.src_addr = hdr.ethernet.dst_addr;
+                  hdr.ethernet.dst_addr = eth;
+
+                  send_back();
+              }
+                                  
+              table listenerIps {
+                  key = {
+                    hdr.inner_ipv4.dst_addr : exact;
+                    hdr.inner_icmp.isValid() : exact;
+                    hdr.inner_icmp.type : ternary;
+                  }
+                  actions = {
+                    send_ping_reply;
+                  }
+                  const entries = {
+                      (PINGER_IP_ADDRESS, true, 8): send_ping_reply();
+                  }
+                  size = 8;
+                  counters = debug2_counter;
+                  # default_action = NoAction();
+              }
+
+              table vxlanIps {
+                  key = {
+                    hdr.ipv4.dst_addr : exact;
+                  }
+                  actions = {
+                    send_vxlan_reply;
+                  }
+                  // const entries = {
+                  //     (PINGER_IP_ADDRESS): NoAction();
+                  // };
+                  counters = debug3_counter;
+                  size = 8;
+                  // default_action = NoAction();
+              }
+
+              table listenerMAC {
+                  key = {
+                    hdr.inner_ethernet.dst_addr : exact;
+                  }
+                  actions = {
+                    NoAction;
+                  }
+                  // const_entries = {
+                  //     (0xFF): NoAction();
+                  //     (PINGER_MAC_ADDRESS): NoAction();
+                  // };
+                  size = 8;
+                  // counters = debug2_counter;
+                  default_action = NoAction();
+              }
+
+              table arp {
+                  key = {
+                      hdr.arp.isValid() : exact;
+                      hdr.arp.op : ternary;
+                      hdr.arp.targetIpAddr : ternary;
+                      hdr.inner_arp.isValid() : exact;
+                      hdr.inner_arp.op : ternary;
+                      hdr.inner_arp.targetIpAddr : ternary;
+                  }
+                  actions = {
+                      send_arp_reply;
+                      send_inner_arp_reply;
+                  }
+                  counters = debug_counter;
+                  const entries = {
+                      (true, ARP_OPCODE_REQUEST, PINGER_HOST_IP_ADDRESS, false, _, _): send_arp_reply();
+                      (false, _, _, true, ARP_OPCODE_REQUEST, PINGER_IP_ADDRESS):  send_inner_arp_reply();
+                  }
+                  size = 8;
+              }
+
+              apply {
+                  // Check if dest MAC address is PINGER MAC Address or Broadcast
+                  // FIXME: This should be the better solution!
+                  // if (hdr.arp.isValid() && hdr.arp.op == ARP_OPCODE_REQUEST && hdr.arp.targetIpAddr == PINGER_IP_ADDRESS) {
+                  // if (hdr.arp.op == ARP_OPCODE_REQUEST && hdr.arp.targetIpAddr == PINGER_IP_ADDRESS) {
+                  //     // Send ARP reply
+                  //     send_arp_reply();
+                  // }
+                  arp.apply();
+                  if (listenerMAC.apply().hit) {
+                      // debug2_counter.count();
+                      // if (hdr.ipv4.isValid()) {
+                          // Check if dest IP address is PINGER IP Address
+                          vxlanIps.apply();
+                          if (hdr.inner_ipv4.isValid()) {
+                              // Check if dest IP address is PINGER IP Address
+                              listenerIps.apply();
+                              //if (listenerIps.apply().hit) {
+                                  // Send pong packet
+                                  // if(hdr.inner_icmp.isValid() && hdr.inner_icmp.type == 8) {
+                                  //     send_ping_reply();
+                                  //     }
+                              //}
+                          }
+                              // else if (hdr.inner_arp.isValid()) {
+                              //     // Send ARP reply
+                              //     send_inner_arp_reply();
+                              // } 
+                              // send_vxlan_reply();
+                          
+                      // }
+                  }
+              }
+          }
+          #endif // __PINGER__
+
+
+
+        mainIngressName: PingerIngress

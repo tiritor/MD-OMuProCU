@@ -157,7 +157,15 @@ class OMuProCUHealthMonitor(Process):
 
     def get_md_deployment_device_state(self, name, tenantId, tenantFuncName):
         """
-        docstring
+        Get the MD deployment status of a device.
+
+        Args:
+            name (str): The name of the device.
+            tenantId (str): The ID of the tenant.
+            tenantFuncName (str): The functional name of the tenant.
+
+        Returns:
+            DeploymentStatus: The deployment status of the device.
         """
         with grpc.insecure_channel(GLOBALVIEW_ADDRESS) as channel:
             stub = TopologyUpdateCommunicatorStub(channel)
@@ -207,7 +215,16 @@ class OMuProCUHealthMonitor(Process):
 
     def set_md_deployment_device_state(self, name, tenantId, tenantFuncName, mdDeploymentStatus : DeploymentStatus):
         """
-        docstring
+        Sets the MD deployment device state for a given device.
+
+        Args:
+            name (str): The name of the device.
+            tenantId (str): The ID of the tenant.
+            tenantFuncName (str): The functional name of the tenant.
+            mdDeploymentStatus (DeploymentStatus): The deployment status of the MD.
+
+        Returns:
+            None
         """
         with grpc.insecure_channel(GLOBALVIEW_ADDRESS) as channel:
             stub = TopologyUpdateCommunicatorStub(channel)

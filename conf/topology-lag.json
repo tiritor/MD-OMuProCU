@@ -43,27 +43,21 @@
             "lag_ecmp_groups": {
                 "lag_1": {
                     "id": 2000,
-                    "memberbase": 100000,
+                    "memberbase": 200000,
                     "dpPorts": [
                         {
                             "portId": 44, 
+                            "active": true
+                        },
+                        {
+                            "portId": 144,
                             "active": true
                         }
                     ]
                 },
                 "lag_2": {
                     "id": 2001,
-                    "memberbase": 200000,
-                    "dpPorts": [
-                        {
-                            "portId": 144,
-                            "active": false
-                        }
-                    ]
-                },
-                "lag_3": {
-                    "id": 2002,
-                    "memberbase": 300000,
+                    "memberbase": 100000,
                     "dpPorts": [
                         {
                             "portId": 145,
@@ -75,28 +69,19 @@
             "nexthop_map": {
                 "default" : 100,
                 "lag_1" : 100,
-                "lag_2" : 101,
-                "lag_3" : 102
+                "lag_2" : 101
             },
             "ipv4_host_entries":[
                 {
                     "ip": "10.100.0.102",
-                    "nexthop_id": 102
-                },
-                {
-                    "ip": "10.100.0.200",
-                    "nexthop_id": 100
-                } 
+                    "nexthop_id": 101
+                }                
             ],
             "arp_table_host_entries": [
                 {
                     "ip": "10.100.0.102",
-                    "nexthop_id": 102
-                },
-                {
-                    "ip": "10.100.0.200",
-                    "nexthop_id": 100
-                } 
+                    "nexthop_id": 101
+                }
             ],
             "runtimeRules": {},
             "connections": 
@@ -204,27 +189,21 @@
             "lag_ecmp_groups": {
                 "lag_1": {
                     "id": 2000,
-                    "memberbase": 100000,
+                    "memberbase": 200000,
                     "dpPorts": [
                         {
                             "portId": 45, 
                             "active": true
-                        }
-                    ]
-                },
-                "lag_2": {
-                    "id": 2001,
-                    "memberbase": 200000,
-                    "dpPorts": [
+                        },
                         {
                             "portId": 144,
                             "active": true
                         }
                     ]
                 },
-                "lag_3": {
-                    "id": 2002,
-                    "memberbase": 300000,
+                "lag_2": {
+                    "id": 2001,
+                    "memberbase": 100000,
                     "dpPorts": [
                         {
                             "portId": 145,
@@ -236,26 +215,17 @@
             "nexthop_map": {
                 "default" : 100,
                 "lag_1" : 100,
-                "lag_2" : 101,
-                "lag_3" : 102
+                "lag_2" : 101
             },
             "ipv4_host_entries":[
                 {
                     "ip": "10.100.0.101",
-                    "nexthop_id": 102
-                },
-                {
-                    "ip": "10.100.0.200",
                     "nexthop_id": 101
-                }
+                }                
             ],
             "arp_table_host_entries": [
                 {
                     "ip": "10.100.0.101",
-                    "nexthop_id": 102
-                },
-                {
-                    "ip": "10.100.0.200",
                     "nexthop_id": 101
                 }
             ],

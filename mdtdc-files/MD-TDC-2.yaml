@@ -1,10 +1,10 @@
-id: 42 # ID
-name: TDC-Test
+id: 43 # ID
+name: TDC2-Test
 
 TDCs:
   - deviceName: s2
     manifest:
-      name: TDC-Test
+      name: TDC2-Test
       TCD: # Tenant CNF Definition
         kubernetesDeployment: # Kubernetes Deployment
           apiVersion: apps/v1
@@ -35,12 +35,12 @@ TDCs:
         acceleratorType: tofino
       TIL: # Tenant Isolation Logic
         accessRules: 
-          VNI: 43 # Number | List
+          VNI: 42 # Number | List
         countermeasureRules:
           defaultAction: accept # Enum of {accept, drop, soft, hard}
           rules:
-            - vni: 43
-              src_ip: 192.168.43.10
+            - vni: 42
+              src_ip: 192.168.42.10
               dst_ip: 172.16.22.5
               src_port: 4545
               dst_port: 4242
@@ -48,8 +48,8 @@ TDCs:
               action: "drop"
         runtimeRules: # Rules for tables which are deployed in the tenant in-network code 
           - mode: 'table_add'
-            table: 'TestIngress.test_table' # table name with start point in its p4 code!
-            actionName: 'TestIngress.CheckFeature' # action name with start point in its p4 code!
+            table: 'Test2Ingress.test_table' # table name with start point in its p4 code!
+            actionName: 'Test2Ingress.CheckFeature' # action name with start point in its p4 code!
             match: "{'meta.feature_meta.node_id': 0, 'meta.feature_meta.prevFeature': 0, 'meta.feature_meta.isTrue': 1}" # match with start point in its p4 code!
             actionParams: "{'node_id': 1, 'f_inout': 1, 'threshold': 64}" # action params with start point in its p4 code!
       INC: # in-network code of tenant 
@@ -58,10 +58,10 @@ TDCs:
           ************************* C O N T R O L **********************************
           *************************************************************************/
 
-          #ifndef __TestIngress_42__
-          #define __TestIngress_42__
+          #ifndef __Test2Ingress_43__
+          #define __Test2Ingress_43__
 
-          control TestIngress(inout headers_t hdr,
+          control Test2Ingress(inout headers_t hdr,
                                 inout metadata_t meta,
                                 in ingress_intrinsic_metadata_t ig_intr_md) {
           
@@ -102,11 +102,11 @@ TDCs:
               // log_msg("Tenant43");
             }
           }
-          #endif // __TestIngress_42__
-        mainIngressName: TestIngress
+          #endif // __Test2Ingress_43__
+        mainIngressName: Test2Ingress
   - deviceName: s4
     manifest:
-      name: TDC-Test
+      name: TDC2-Test
       TCD: # Tenant CNF Definition
         kubernetesDeployment: # Kubernetes Deployment
           apiVersion: apps/v1
@@ -114,7 +114,7 @@ TDCs:
           metadata:
             labels:
               app: ubuntu
-            name: debian24-deployment
+            name: debian2-deployment
             namespace: test
           spec:
             replicas: 3
@@ -137,12 +137,12 @@ TDCs:
         acceleratorType: tofino
       TIL: # Tenant Isolation Logic
         accessRules: 
-          VNI: 43 # Number | List
+          VNI: 42 # Number | List
         countermeasureRules:
           defaultAction: accept # Enum of {accept, drop, soft, hard}
           rules:
-            - vni: 43
-              src_ip: 192.168.43.10
+            - vni: 42
+              src_ip: 192.168.42.10
               dst_ip: 172.16.22.5
               src_port: 4545
               dst_port: 4242
@@ -150,8 +150,8 @@ TDCs:
               action: "drop"
         runtimeRules: # Rules for tables which are deployed in the tenant in-network code 
           - mode: 'table_add'
-            table: 'TestIngress.test_table' # table name with start point in its p4 code!
-            actionName: 'TestIngress.CheckFeature' # action name with start point in its p4 code!
+            table: 'Test2Ingress.test_table' # table name with start point in its p4 code!
+            actionName: 'Test2Ingress.CheckFeature' # action name with start point in its p4 code!
             match: "{'meta.feature_meta.node_id': 0, 'meta.feature_meta.prevFeature': 0, 'meta.feature_meta.isTrue': 1}" # match with start point in its p4 code! 
             actionParams: "{'node_id': 1, 'f_inout': 1, 'threshold': 64}" # action params with start point in its p4 code!
       INC: # in-network code of tenant
@@ -160,10 +160,10 @@ TDCs:
           ************************* C O N T R O L **********************************
           *************************************************************************/
 
-          #ifndef __TestIngress_42__
-          #define __TestIngress_42__
+          #ifndef __Test2Ingress_43__
+          #define __Test2Ingress_43__
 
-          control TestIngress(inout headers_t hdr,
+          control Test2Ingress(inout headers_t hdr,
                                 inout metadata_t meta,
                                 in ingress_intrinsic_metadata_t ig_intr_md) {
           
@@ -204,5 +204,5 @@ TDCs:
               // log_msg("Tenant43");
             }
           }
-          #endif // __TestIngress_42__
-        mainIngressName: TestIngress
+          #endif // __Test2Ingress_43__
+        mainIngressName: Test2Ingress

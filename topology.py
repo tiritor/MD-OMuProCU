@@ -129,6 +129,7 @@ class GlobalView(MultiDiGraph):
                     "OMuProCUEnabled": metadata["OMuProCUEnabled"],
                     "status": OrchestratorHealthStates.UNKNOWN,
                     "deployments": {},
+                    "runtimeRules": metadata["runtimeRules"],
                     "lagEcmpGroups": metadata["lag_ecmp_groups"],
                     "nexthopMap": metadata["nexthop_map"],
                     "ipv4HostEntries": metadata["ipv4_host_entries"],
@@ -350,6 +351,21 @@ class GlobalView(MultiDiGraph):
             list: The table entries for the specified device and table.
         """
         return self.get_device_node(device)[table]
+
+    def get_runtime_table_entries_for_devices(self, device, table):
+        """
+        Get the runtime table entries for a specific device.
+
+        Args:
+            device (str): The name of the device.
+            table (str): The name of the table.
+
+        Returns:
+            list: The runtime table entries for the specified device and table.
+        """
+        if table not in self.get_device_node(device)["runtimeRules"]:
+            self.get_device_node(device)["runtimeRules"][table] = []
+        return self.get_table_entries_for_devices(device, "runtimeRules")[table]
 
     def find_lag_by_dp_port_member(self, device, src_dp_port):
         """
@@ -640,6 +656,9 @@ class GlobalView(MultiDiGraph):
             bool: True if the lag group is equal to the given dictionary, False otherwise.
         """
         dict_new = self.get_lag_ecmp_groups_for_device_by_id(device_name, dict["id"])
+        for i, port in enumerate(dict["dpPorts"]):
+            if "active" not in port.keys():
+                dict["dpPorts"][i]["active"] = False
         return dict == dict_new
 
     def is_device_lag_group_in_topology(self, device_name: str, key: Union[str, int]):
@@ -715,6 +734,59 @@ class GlobalView(MultiDiGraph):
                 return entry
         return None
 
+    def set_device_routing_table_configuration_entry(self, device_name: str, table: str, key: str, value: str = None, new_value : Union[str, dict] = None):
+        """
+        Set the configuration entry in the routing table for a specific device.
+
+        Args:
+            device_name (str): The name of the device.
+            table (str): The routing table.
+            key (str): The key to search for in the entries.
+            value (str): The value to match with the key.
+            entry (dict): The configuration entry to set.
+        """
+        # print(f"Setting routing table configuration entry for device {device_name} in table {table} with key {key} and value {value}")
+        # print(self.get_device_node(device_name).keys())
+        # print(table not in self.get_device_node(device_name).keys())
+        if new_value is None:
+            raise ValueError("New value must be provided!")
+        if table not in self.get_device_node(device_name).keys():
+            raise ValueError("Table does not exist in the device node!")
+        entries: list = self.get_table_entries_for_devices(device_name, table)
+        entry = {}
+        if self.is_in_device_routing_table_configuration(device_name, table, key, value):
+            # find entry and delete it
+            for entry in entries:
+                if entry[key] == value:
+                    entries.remove(entry)
+                    break
+        else:
+            entry = {'ip': value, 'nexthop_id': new_value}
+        if value is not None:
+            entries.append(entry)
+        self.nodes[device_name][table] = entries
+
+    def delete_device_routing_table_configuration_entry(self, device_name: str, table: str, key: str, value: str = None):
+        """
+        Delete the configuration entry from the routing table for a specific device.
+
+        Args:
+            device_name (str): The name of the device.
+            table (str): The routing table.
+            key (str): The key to search for in the entries.
+            value (str): The value to match with the key.
+        """
+        deleted = False
+        entries: list = self.get_table_entries_for_devices(device_name, table)
+        if self.is_in_device_routing_table_configuration(device_name, table, key, value):
+            for entry in entries:
+                if entry[key] == value:
+                    entries.remove(entry)
+                    deleted = True
+                    break
+        self.nodes[device_name][table] = entries
+        return deleted
+
     def is_in_device_routing_table_configuration(self, device_name : str, table : str, key : str, value : str):
         """
         Check if a given key-value pair exists in the routing table configuration of a specific device.
@@ -752,6 +824,93 @@ class GlobalView(MultiDiGraph):
             for entry in entries:
                 if entry["ip"] == table_config.key and entry["nexthop_id"] == table_config.nextHopId:
                     return True
+        return False
+    
+    def add_tenant_table_entry(self, device_name: str, table: str, match_fields: str, action_name: str, action_params: str):
+        """
+        Add an entry to the tenant table for a specific device.
+
+        Args:
+            device_name (str): The name of the device.
+            table (str): The table name.
+            match_fields (str): The match fields for the entry.
+            action_name (str): The action name for the entry.
+            action_params (str): The action parameters for the entry.
+        """
+        entries: list = self.get_runtime_table_entries_for_devices(device_name, table)
+        entries.append({
+            "table_name": table,
+            "match_fields": match_fields,
+            "action_name": action_name,
+            "action_params": action_params
+        })
+        self.nodes[device_name]["runtimeRules"][table] = entries
+
+    def set_tenant_table_entry(self, device_name: str, table: str, match_fields: str, action_name: str, action_params: str):
+        """
+        Set the entry in the tenant table for a specific device.
+
+        Args:
+            device_name (str): The name of the device.
+            table (str): The table name.
+            key (str): The key to search for in the entries.
+            value (str): The value to match with the key.
+            new_value (str): The new value to set.
+        """
+        entries : list = self.get_runtime_table_entries_for_devices(device_name, table)
+        # Find correct entry and update it
+        for entry in entries:
+            if entry["match_fields"] == match_fields:
+                entry["action_name"] = action_name
+                entry["action_params"] = action_params
+                break
+        self.nodes[device_name]["runtimeRules"][table] = entries
+
+    def delete_tenant_table_entry(self, device_name: str, table: str, key: str):
+        """
+        Delete the entry from the tenant table for a specific device.
+
+        Args:
+            device_name (str): The name of the device.
+            table (str): The table name.
+            key (str): The key to search for in the entries.
+            value (str): The value to match with the key.
+        """
+        entries : list = self.get_runtime_table_entries_for_devices(device_name, table)
+        # Find correct entry and delete it
+        for entry in entries:
+            if entry["match_fields"] == key:
+                entries.remove(entry)
+                break
+        self.nodes[device_name]["runtimeRules"][table] = entries
+
+    def is_entry_in_tenant_table(self, device_name: str, table: str, match_fields: str, action_name: str = None, action_params: str = None):
+        """
+        Check if an entry exists in the tenant table for a specific device.
+
+        Args:
+            device_name (str): The name of the device.
+            table (str): The table name.
+            match_fields (str): The match fields for the entry.
+            action_name (str): The action name for the entry.
+            action_params (str): The action parameters for the entry.
+
+        Returns:
+            bool: True if the entry exists, False otherwise.
+        """
+        entries = self.get_runtime_table_entries_for_devices(device_name, table)
+        for entry in entries:
+            if action_name is None and action_params is None:
+                if entry["match_fields"] == match_fields:
+                    return True
+            elif action_name is not None and action_params is None:
+                if entry["match_fields"] == match_fields and entry["action_name"] == action_name:
+                    return True
+            elif action_name is None and action_params is not None:
+                if entry["match_fields"] == match_fields and entry["action_params"] == action_params:
+                    return True
+            elif entry["match_fields"] == match_fields and entry["action_name"] == action_name and entry["action_params"] == action_params:
+                return True
         return False
 
     def is_in_device_port_configuration(self, device_name: str, port: Union[DpPort, dict, int]):

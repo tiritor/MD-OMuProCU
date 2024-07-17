@@ -1,0 +1,508 @@
+#!/usr/bin/python3
+
+import cmd
+import logging
+import os
+import re
+import shlex
+import time
+import grpc
+import subprocess
+import argparse
+
+from orchestrator_utils.md_orchestrator_client import MDOMuProCUClient, MDRulesUpdateResponse, TableCategory
+from orchestrator_utils.til.md_orchestrator_msg_pb2 import MDDeploymentRequest, MDDeploymentResponse
+
+from conf.config import DEPLOYMENT_ADDRESS
+
+DEPLOYMENT_ADDRESS = "127.0.0.1:" + DEPLOYMENT_ADDRESS.split(":")[-1]
+OMUPROCU_CLIENT_LOG_LEVEL = logging.INFO
+
+
+font_colors = {
+    'PURPLE': "\x1b[35m",
+    'BLUE': "\x1b[34m",
+    'GREEN': "\x1b[32m",
+    'BLACK': "\x1b[30m",
+    'WHITE': "\x1b[37m",
+    'CYAN': "\x1b[36m",
+    'GREY': "\x1b[38;20m",
+    'YELLOW': "\x1b[33;20m",
+    'RED': "\x1b[31;20m",
+    'BOLD_RED': "\x1b[31;1m",
+    'RESET': "\x1b[0m"
+}
+
+def success_print(content):
+    """
+    docstring
+    """
+    print(font_colors['GREEN'] + content + font_colors['RESET'])
+
+def warn_print(content):
+    """
+    docstring
+    """
+    print(font_colors['YELLOW'] + content + font_colors['RESET'])
+
+def err_print(content):
+    """
+    docstring
+    """
+    print(font_colors['RED'] + content + font_colors['RESET'])
+
+AVAILABLE_PROVIDER_TABLES = ["ipv4_host", "nexthop", "arp_table"]
+VALID_DEVICE_NAMES = ["s1", "s2", "s3", "s4"]
+
+class MOCShell(cmd.Cmd):
+    intro = font_colors['BLUE'] + 'Welcome to MD-OMuProCU-Client (MOC) Shell. Type help or ? to list commands.\n' + font_colors['RESET'] 
+    prompt = '(MOC)> ' # MD-OMuProCU-Client
+
+    def __init__(self, timetracking = False, completekey: str = "tab", stdin = None, stdout = None) -> None:
+        super().__init__(completekey, stdin, stdout)
+        if timetracking:
+            self.timetracking = True
+            self.timetracking_file = open("moc_shell_timetracking.csv", "w")
+            self.timetracking_file.write("Command,Processing Time\n")
+        else:
+            self.timetracking = False
+
+    def _split_args(self, args):
+        pattern = re.compile(".*}'")
+        match_field_end_index = -1
+        for i, arg in enumerate(args):
+            if pattern.match(arg):
+                match_field_end_index = i
+                break
+        match_fields = ' '.join(args[2:match_field_end_index + 1])
+        # action_params_end_index = -1
+        # for i, arg in enumerate(args[match_field_end_index + 2:]):
+        #     if pattern.match(arg):
+        #         action_params_end_index = i
+        #         break
+        action_params = ' '.join(args[match_field_end_index + 2:])
+        arg = [args[0], args[1], match_fields, args[match_field_end_index + 1], action_params]
+        # print(arg)
+        # print(len(arg))
+        return arg
+
+    def do_exit(self, arg):
+        'Exit the shell:  EXIT'
+        print('Stopping MD-OMuProCU-Client...')
+        if self.timetracking:
+            self.timetracking_file.close()
+        return True
+    
+    def do_cleanup(self, arg):
+        'Cleanup the MD-OMuProCU-Client:  CLEANUP'
+        print('Cleaning up...')
+        try:
+            client = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL)
+            resp : MDDeploymentResponse = client.cleanup()
+            if resp.status == 200:
+                success_print("Cleanup successful")
+            else:
+                err_print("Cleanup failed: " + str(resp))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('Error while cleaning up: {}'.format(err))
+        except Exception as e:
+            err_print('Error while cleaning up: {}'.format(e))
+
+    def do_connectivity(self, arg):
+        'Check the connectivity to the orchestrator:  CONNECTIVITY'
+        print('Checking connectivity...')
+        try:
+            client = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL)
+            resp : MDDeploymentResponse = client.check_health()
+            if resp.status == 200:
+                success_print("Connectivity to " + DEPLOYMENT_ADDRESS + " is OK")
+            else:
+                warn_print("Connectivity to " + DEPLOYMENT_ADDRESS + " is NOT OK")
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('Error while checking connectivity: {}'.format(err))
+        except Exception as e:
+            err_print('Error while checking connectivity: {}'.format(e))
+
+    def do_create(self, arg, wait=True):
+        'Submit a create OMuProCU request:  CREATE <filepath> [<filepath>]...'
+        client = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL)
+        try:
+            if len(arg.split(" ")) == 1:
+                if os.path.exists(arg):
+                    print('Submitting OMuProCU CREATE {} request...'.format(arg))
+                    resp : MDDeploymentResponse = client.create(arg)
+                else:
+                    err_print('Error while submitting: File {} not found'.format(arg))
+                if resp.status == 200:
+                    success_print("Create request submitted successfully")
+                else:
+                    err_print("Submitting create request for {} failed: {}".format(arg, str(resp)))
+            elif len(arg.split(" ")) == 0:
+                err_print('Error while submitting: No file provided')
+            else:
+                for file in arg.split(" "):
+                    if os.path.exists(file):
+                        print('Submitting OMuProCU CREATE {} request...'.format(file))
+                        resp : MDDeploymentResponse = client.create(file)
+                        if resp.status == 200:
+                            success_print("Create request for {} submitted successfully".format(file))
+                        else:
+                            err_print("Submitting create request for {} failed: {}".format(file, str(resp)))
+                    else:
+                        err_print('Error while submitting: File {} not found'.format(file))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('GRPC Error while submitting create request: {}'.format(err))
+        except Exception as e:
+            err_print('Error while submitting create request: {}'.format(e))
+    
+    
+    def do_update(self, arg, wait=True):
+        'Submit an update OMuProCU request:  UPDATE <filepath> [<filepath>]...'
+        client = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL)
+        try:
+            if len(arg.split(" ")) >= 1:
+                if os.path.exists(arg):
+                    print('Submitting OMuProCU UPDATE {} request...'.format(arg))
+                    resp : MDDeploymentResponse = client.update(arg)
+                else:
+                    err_print('Error while submitting: File {} not found'.format(arg))
+                if resp.status == 200:
+                    success_print("Update request submitted successfully")
+                else:
+                    err_print("Submitting update request for {} failed: {}".format(arg, str(resp)))
+            else:
+                for file in arg.split(" "):
+                    if os.path.exists(file):
+                        print('Submitting OMuProCU UPDATE {} request...'.format(file))
+                        resp : MDDeploymentResponse = client.update(file)
+                        if resp.status == 200:
+                            success_print("Update request for {} submitted successfully".format(file))
+                        else:
+                            err_print("Submitting update request for {} failed: {}".format(file, str(resp)))
+                    else:
+                        err_print('Error while submitting: File {} not found'.format(file))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('GRPC Error while submitting update request: {}'.format(err))
+        except Exception as e:
+            err_print('Error while submitting update request: {}'.format(e))
+    
+    def do_delete(self, arg, wait=True):
+        'Submit a delete OMuProCU request:  DELETE <filepath> [<filepath>]...'
+        client = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL)
+        try:
+            if len(arg.split(" ")) >= 1:
+                if os.path.exists(arg):
+                    print('Submitting OMuProCU DELETE {} request...'.format(arg))
+                    resp : MDDeploymentResponse = client.delete(arg)
+                else:
+                    err_print('Error while submitting: File {} not found'.format(arg))
+                if resp.status == 200:
+                    success_print("Delete request submitted successfully")
+                else:
+                    err_print("Submitting delete request for {} failed: {}".format(arg, str(resp)))
+            else:
+                for file in arg.split(" "):
+                    if os.path.exists(file):
+                        print('Submitting OMuProCU DELETE {} request...'.format(file))
+                        resp : MDDeploymentResponse = client.delete(file)
+                        if resp.status == 200:
+                            success_print("Delete request for {} submitted successfully".format(file))
+                        else:
+                            err_print("Submitting delete request for {} failed: {}".format(file, str(resp)))
+                    else:
+                        err_print('Error while submitting: File {} not found'.format(file))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('GRPC Error while submitting delete request: {}'.format(err))
+        except Exception as e:
+            print('Error while submitting delete request: {}'.format(e))
+    
+    def do_rules(self, arg):
+        self.start_time = time.time()
+        args = arg.split()
+        if len(args) > 0:
+            subcommand = args[0]
+            if subcommand == 'provider':
+                self.do_rules_provider(args[1:])
+            elif subcommand == 'tenant':
+                self.do_rules_tenant(args[1:])
+            else:
+                err_print(f"Unknown subcommand {subcommand}")
+        else:
+            err_print("No subcommand provided. Valid subcommands are: 'provider' and 'tenant'.")
+
+    def do_rules_provider(self, args):
+        if len(args) > 0:
+            action = args[0]
+            if action == 'get':
+                self.provider_get(args[1:])
+            elif action == 'create':
+                self.provider_create(args[1:])
+            elif action == 'update':
+                self.provider_update(args[1:])
+            elif action == 'delete':
+                self.provider_delete(args[1:])
+            else:
+                err_print(f"Unknown action {action} for provider")
+        else:
+            err_print("No action provided for provider. Valid actions are: 'get', 'create', 'update' and 'delete'.")
+
+    def do_rules_tenant(self, args):
+        if len(args) > 0:
+            action = args[0]
+            if action == 'get':
+                self.tenant_get(args[1:])
+            elif action == 'create':
+                self.tenant_create(args[1:])
+            elif action == 'update':
+                self.tenant_update(args[1:])
+            elif action == 'delete':
+                self.tenant_delete(args[1:])
+            else:
+                err_print(f"Unknown action {action} for tenant")
+        else:
+            err_print("No action provided for tenant. Valid actions are: 'get','create', 'update' and 'delete'.")
+        
+    def provider_get(self, args):
+        print(f"Getting provider with args: {args}")
+        if len(args) == 0:
+            err_print("No provider table provided. Valid provider tables are: 'ipv4_host', 'nexthop' and 'arp_table'.")
+            return
+        provider_tables = args[0]
+        if provider_tables in AVAILABLE_PROVIDER_TABLES:
+            print(f"Updating provider table {provider_tables} with args: {args[1:]}")
+            try:
+                MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL).get_md_rules(args)
+                processing_time = time.time() - self.start_time
+                success_print("Got provider table entry successfully (Processing time: {:.2f} seconds)".format(processing_time))
+                if self.timetracking:
+                    self.timetracking_file.write(f"PROVIDER_RULE_GET,{processing_time}\n")
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.UNAVAILABLE:
+                    err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+                else:
+                    err_print('Error while updating provider table: {}'.format(err))
+
+            except Exception as e:
+                err_print('Error while updating provider table: {}'.format(e))
+            
+        else:
+            err_print(f"Unknown provider table {provider_tables}")
+
+    def provider_create(self, args):
+        
+        print(f"Creating provider with args: {args}")
+        if len(args) == 0:
+            err_print("No provider table provided. Valid provider tables are: 'ipv4_host', 'nexthop' and 'arp_table'.")
+            return
+        provider_tables = args[1]
+        if provider_tables in AVAILABLE_PROVIDER_TABLES:
+            print(f"Creating provider table {provider_tables} with args: {args}")
+            try:
+                resp : MDRulesUpdateResponse = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL).create_md_rules(args, tableCategory=TableCategory.PROVIDER_TABLES)
+                if resp.status == 200:
+                    processing_time = time.time() - self.start_time
+                    success_print("Provider table entry created successfully (Processing time: {:.2f} seconds)".format(processing_time))
+                    if self.timetracking:
+                        self.timetracking_file.write(f"PROVIDER_RULE_CREATE,{processing_time}\n")
+                else:
+                    err_print("Provider table entry creation failed: " + str(resp))
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.UNAVAILABLE:
+                    err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+                else:
+                    err_print('Error while creating provider table: {}'.format(err))
+
+            except Exception as e:
+                err_print('Error while creating provider table: {}'.format(e))
+        else:
+            err_print(f"Unknown provider table {provider_tables}")
+
+    def provider_update(self, args):
+
+        print(f"Updating provider with args: {args}")
+        if len(args) == 0:
+            err_print("No provider table provided. Valid provider tables are: 'ipv4_host', 'nexthop' and 'arp_table'.")
+            return
+        provider_tables = args[1]
+        if provider_tables in AVAILABLE_PROVIDER_TABLES:
+            print(f"Updating provider table {provider_tables} with args: {args}")
+            try:
+                resp: MDRulesUpdateResponse = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL).update_md_rules(args, tableCategory=TableCategory.PROVIDER_TABLES)
+                if resp.status == 200: 
+                    processing_time = time.time() - self.start_time
+                    success_print("Provider table entry updated successfully (Processing time: {:.2f} seconds)".format(processing_time))
+                    if self.timetracking:
+                        self.timetracking_file.write(f"PROVIDER_RULE_UPDATE,{processing_time}\n")
+                else:
+                    err_print("Provider table entry update failed: " + str(resp))
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.UNAVAILABLE:
+                    err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+                else:
+                    err_print('Error while updating provider table: {}'.format(err))
+            except Exception as e:
+                err_print('Error while updating provider table: {}'.format(e))
+        else:
+            err_print(f"Unknown provider table {provider_tables}")
+    
+    def provider_delete(self, args):
+        print(f"Deleting provider with args: {args}")
+        if len(args) == 0:
+            err_print("No provider table provided. Valid provider tables are: 'ipv4_host', 'nexthop' and 'arp_table'.")
+            return
+        provider_tables = args[1]
+        if provider_tables in AVAILABLE_PROVIDER_TABLES:
+            print(f"Deleting provider table {provider_tables} with args: {args}")
+            try:
+                resp : MDRulesUpdateResponse = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL).delete_md_rules(args, tableCategory=TableCategory.PROVIDER_TABLES)
+                if resp.status == 200:
+                    processing_time = time.time() - self.start_time
+                    success_print("Provider table entry deleted successfully (Processing time: {:.2f} seconds)".format(processing_time))
+                    self.timetracking_file.write(f"PROVIDER_RULE_DELETE,{processing_time}\n")
+                else:
+                    err_print("Provider table entry deletion failed: " + str(resp))
+            except grpc.RpcError as err:
+                if err.code() == grpc.StatusCode.UNAVAILABLE:
+                    err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+                else:
+                    err_print('Error while deleting provider table: {}'.format(err))
+            except Exception as e:
+                err_print('Error while deleting provider table: {}'.format(e))
+        else:
+            err_print(f"Unknown provider table {provider_tables}")
+
+    def tenant_get(self, args):
+        print(f"Getting tenant with args: {args}")
+        try:
+            arg = self._split_args(args)
+            MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL).get_md_rules(arg)
+            processing_time = time.time() - self.start_time
+            success_print("Got tenant table entry successfully (Processing time: {:.2f} seconds)".format(processing_time))
+            if self.timetracking:
+                self.timetracking_file.write(f"TENANT_RULE_GET,{processing_time}\n")
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('Error while updating tenant table: {}'.format(err))
+        except Exception as e:
+            err_print('Error while updating tenant table: {}'.format(e))
+
+    def tenant_create(self, args : list):
+        print(f"Creating tenant with args: {args}")
+        # print(len(args))
+        try:
+            arg = self._split_args(args)
+            resp : MDRulesUpdateResponse = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL).create_md_rules(arg, tableCategory=TableCategory.TENANT_TABLES)
+            if resp.status == 200:
+                processing_time = time.time() - self.start_time
+                success_print("Tenant table entry created successfully (Processing time: {:.2f} seconds)".format(processing_time))
+                if self.timetracking:
+                    self.timetracking_file.write(f"TENANT_RULE_CREATE,{processing_time}\n")
+            else:
+                err_print("Tenant table entry creation failed: " + str(resp))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('Error while creating tenant table: {}'.format(err))
+        except Exception as e:
+            err_print('Error while creating tenant table: {}'.format(e))
+
+    def tenant_update(self, args):
+        print(f"Updating tenant with args: {args}")
+        try:
+            arg = self._split_args(args)
+            resp : MDRulesUpdateResponse = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL).update_md_rules(arg, tableCategory=TableCategory.TENANT_TABLES)
+            if resp.status == 200:
+                processing_time = time.time() - self.start_time
+                success_print("Tenant table entry updated successfully (Processing time: {:.2f} seconds)".format(processing_time))
+                if self.timetracking:
+                    self.timetracking_file.write(f"TENANT_RULE_UPDATE,{processing_time}\n")
+            else:
+                err_print("Tenant table entry update failed: " + str(resp))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('Error while updating tenant table: {}'.format(err))
+        except Exception as e:
+            err_print('Error while updating tenant table: {}'.format(e))
+    
+    def tenant_delete(self, args):
+        print(f"Deleting tenant with args: {args}")
+        try:
+            arg = self._split_args(args)
+            resp : MDRulesUpdateResponse = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL).delete_md_rules(arg, tableCategory=TableCategory.TENANT_TABLES)
+            if resp.status == 200:
+                processing_time = time.time() - self.start_time
+                success_print("Tenant table entry deleted successfully (Processing time: {:.2f} seconds)".format(processing_time))
+                if self.timetracking:
+                    self.timetracking_file.write(f"TENANT_RULE_DELETE,{processing_time}\n")
+            else:
+                err_print("Tenant table entry deletion failed: " + str(resp))
+        except grpc.RpcError as err:
+            if err.code() == grpc.StatusCode.UNAVAILABLE:
+                err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
+            else:
+                err_print('Error while deleting tenant table: {}'.format(err))
+        except Exception as e:
+            err_print('Error while deleting tenant table: {}'.format(e))
+
+    def do_test(self, arg):
+        'Run the experiment test file:  TEST [<deployment_address> [<mdtdc_test_file> [<sleep_time> [<iteration_count>]]]]'
+        try:
+            deployment_address = DEPLOYMENT_ADDRESS
+            mdtdc_test_file = "./mdtdc-files/MD-TDC-1.yaml"
+            sleep_time = 140
+            iteration_count = 10
+            if len(arg.split()) == 4:
+                deployment_address, mdtdc_test_file, sleep_time, iteration_count = arg.split()
+            elif len(arg.split()) == 3:
+                deployment_address, mdtdc_test_file, sleep_time = arg.split()
+            elif len(arg.split()) == 2:
+                deployment_address, mdtdc_test_file = arg.split()
+            elif len(arg.split()) == 1:
+                deployment_address = arg
+            print("Running experiment tests...")
+            command = "python3 test.py -d {} -f {} -t {} -i {}".format(deployment_address, mdtdc_test_file, sleep_time, iteration_count)
+            subprocess.run(shlex.split(command), check=True)
+        except Exception as e:
+            err_print('Error while running test: {}'.format(e))
+
+    def do_run_commands(self, arg):
+        'Run a series of commands separated by semicolons'
+        commands = arg.split(';')
+        for command in commands:
+            self.onecmd(command.strip())
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='MD-OMuProCU-Client Shell')
+    parser.add_argument('-d', '--deployment_address', type=str, help='Deployment address', default=DEPLOYMENT_ADDRESS)
+    parser.add_argument('-l', '--log_level', type=int, help='OMuProCU Client Log Level', default=OMUPROCU_CLIENT_LOG_LEVEL)
+    parser.add_argument('-t', '--timetracking', type=bool, help='Enable time tracking to csv file', default=False)
+    parser.add_argument('-c', '--commands', type=str, help='Commands to run, separated by semicolons')
+    args = parser.parse_args()
+
+    DEPLOYMENT_ADDRESS = args.deployment_address
+    OMUPROCU_CLIENT_LOG_LEVEL = args.log_level
+    shell = MOCShell(args.timetracking)
+    if args.commands:
+        shell.do_run_commands(args.commands)
+    else:
+        shell.cmdloop()

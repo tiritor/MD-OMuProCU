@@ -12,13 +12,14 @@ import time
 import grpc
 from google.protobuf.json_format import ParseDict, MessageToDict
 
-from orchestrator_utils.til.md_orchestrator_msg_pb2_grpc import MDDeploymentCommunicatorServicer, TopologyUpdateCommunicatorServicer, add_MDDeploymentCommunicatorServicer_to_server, add_TopologyUpdateCommunicatorServicer_to_server
+from orchestrator_utils.til.md_orchestrator_msg_pb2_grpc import MDDeploymentCommunicatorServicer, MDRulesUpdaterCommunicatorServicer, TopologyUpdateCommunicatorServicer, add_MDDeploymentCommunicatorServicer_to_server, add_TopologyUpdateCommunicatorServicer_to_server, add_MDRulesUpdaterCommunicatorServicer_to_server
 from orchestrator_utils.til.md_orchestrator_msg_pb2 import MDDeploymentRequest, MDDeploymentResponse, Node, TopologyUpdate, TopologyUpdateResponse,  TopologyUpdateRequest, DeploymentNodeUpdate
 from orchestrator_utils.til.orchestrator_msg_pb2 import TIFControlRequest, TIFControlResponse, UpdateAction, UPDATE_ACTION_CREATE, UPDATE_ACTION_DELETE, UPDATE_ACTION_UPDATE
-from orchestrator_utils.til.orchestrator_msg_pb2_grpc import TIFControlCommunicatorStub
+from orchestrator_utils.til.orchestrator_msg_pb2_grpc import TIFControlCommunicatorStub, RulesUpdaterCommunicatorStub
 from orchestrator_utils.til.tif_control_pb2 import DpPort, Lag, RoutingTableConfiguration
 from orchestrator_utils.til.til_msg_pb2_grpc import DeploymentCommunicatorStub
 from orchestrator_utils.til.til_msg_pb2 import DeploymentResponse, DeploymentRequest, DeploymentMessage, TenantMetadata
+from orchestrator_utils.device_categories import InfrastructureDeviceCategories
 from orchestrator_utils.logger.logger import init_logger
 from orchestrator_utils.validator import MDTDCValidator
 from orchestrator_utils.states import DeploymentStatus
@@ -29,7 +30,7 @@ from topology import GlobalView
 from health_monitor.health_monitor import OMuProCUHealthMonitor
 
 
-class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdateCommunicatorServicer):
+class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdateCommunicatorServicer, MDRulesUpdaterCommunicatorServicer):
     """
     The ManagementProcess class represents the main orchestrator process responsible for managing the deployment and
     configuration of services in the network infrastructure.
@@ -80,11 +81,14 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
         self.grpc_server.add_insecure_port(DEPLOYMENT_ADDRESS)
         self.logger.info("Loaded Global View.")
         self.tenant_security_config = self.load_tenant_security_config()
+        self.deployment_timestamps = {}
+        self.write_timemeasurements_to_file(False)
 
     def start(self) -> None:
         super().start()
         add_MDDeploymentCommunicatorServicer_to_server(self, self.grpc_server)
         add_TopologyUpdateCommunicatorServicer_to_server(self, self.grpc_server)
+        add_MDRulesUpdaterCommunicatorServicer_to_server(self, self.grpc_server)
         self.grpc_server.start()
         self.logger.info("Management Process GRPC Server started.")
         self.rollout_running = True
@@ -116,6 +120,27 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
         self.running = False
         self.grpc_server.stop(10)
         self.logger.info("Orchestrator stopped.")
+
+    def write_timemeasurements_to_file(self, append=True):
+        """
+        docstring
+        """
+        if not append:
+            self.timemeasurement_file = "timemeasurements-{}.csv".format(time.strftime("%Y%m%d_%H%M%S"))
+        with open(self.timemeasurement_file, "a" if append else "w") as f:
+            if not append:
+                f.write("CNF_ID,Operation,deploymentStart,scheduleTimestamp,submissionTimestamp,validationEndTimestamp,deploymentEnd,nodesTimestamps\n")
+            for cnf_id, timestamps in self.deployment_timestamps.items():
+                f.write("{},{},{},{},{},{},{},{}\n".format(
+                    cnf_id, 
+                    timestamps["deploymentType"],
+                    timestamps["deploymentStart"], 
+                    timestamps["scheduleTimestamp"], 
+                    timestamps["submissionTimestamp"], 
+                    timestamps["validationEndTimestamp"], 
+                    timestamps["deploymentEnd"], 
+                    str(timestamps["nodes"]).encode("utf-8")
+                ))
 
     @staticmethod
     def _build_tenant_cnf_id(tenantId, tenantFuncName):
@@ -268,16 +293,22 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
         self.logger.info("Rollout Deployment Loop started.")
         while self.rollout_running:
             with self.rollout_lock:
+                deployment_start_timestamp = time.time()
+                nodes_timestamps = {}
+                cnf_deployment_names = set()
                 update_order = self.global_view.get_update_order()
                 for node in update_order:
                     self.logger.debug("{}:{}".format(node, self.global_view.get_device_node_status(node)))
                     self.logger.debug("Collecting deployments for node {}.".format(node))
                     deployments = self.global_view.get_device_node_deployments_by_md_status(DeploymentStatus.SCHEDULED, node)
+                    for id in deployments.keys():
+                        cnf_deployment_names.update(["{}-{}".format(id, name) for name in deployments[id].keys()])
                     self.logger.debug("Deployments for node {}: {}".format(node, deployments))
                     if len(deployments.keys()) > 0:
                         self.logger.info("Deployments rollout for node {} started.".format(node))
                         if self.global_view.is_device_node_enabled(node) and self.global_view.get_device_node_status(node) == OrchestratorHealthStates.RUNNING:
                             try:
+                                deployment_node_start_timestamp = time.time()
                                 # Degrade device if possible (e.g., set links down)
                                 self.set_state_for_device_on_edge_devices(node, False)
                                 # Deploy TDCs to device
@@ -285,6 +316,8 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
                                 self._cleanup_tenant_security_config(node, deployments)
                                 # Upgrade device again if possible (e.g., set links up)
                                 self.set_state_for_device_on_edge_devices(node, True)
+                                deployment_node_end_timestamp = time.time()
+                                nodes_timestamps.update({node: (deployment_node_start_timestamp,deployment_node_end_timestamp)})
                             except Exception as ex:
                                 self.logger.error("Error while deploying TDC @ {}: {}".format(node, ex))
                                 self.logger.exception(ex)
@@ -301,6 +334,13 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
                             self.logger.debug("Cleanup deployments that should be deleted at the node")
                             self._cleanup_tenant_security_config(node, deployments, True)
                             continue
+                deployment_end_timestamp = time.time()
+                for cnf in list(cnf_deployment_names):
+                    self.deployment_timestamps[cnf]["deploymentStart"] = deployment_start_timestamp
+                    self.deployment_timestamps[cnf]["deploymentEnd"] = deployment_end_timestamp
+                    self.deployment_timestamps[cnf]["nodes"] = nodes_timestamps
+                self.write_timemeasurements_to_file()
+                self.deployment_timestamps.clear()
             time.sleep(15)
 
     def switch_port_configuration_loop(self):
@@ -519,7 +559,7 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
                                             else:
                                                 entry = self.global_view.get_device_routing_table_configuration_entry(device_name, "ipv4HostEntries", "ip", entry.key)
                                                 if entry is not None:
-                                                    arp_table_entries_to_update.append(ParseDict({
+                                                    ipv4_hosts_to_update.append(ParseDict({
                                                         "key" : entry["ip"],
                                                         "nextHopId": entry["nexthop_id"],
                                                     }, RoutingTableConfiguration()))
@@ -766,7 +806,9 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
             operation = "Update"
         elif updateAction == UPDATE_ACTION_DELETE:
             operation = "Delete"
-
+        schedule_timestamp = time.time()
+        self.deployment_timestamps["{}-{}".format(mdtdc["id"], mdtdc["name"])]["scheduleTimestamp"] = schedule_timestamp
+        
         return MDDeploymentResponse(
             status=200,
             message="{} request submitted successfully".format(operation)
@@ -886,11 +928,37 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
                     message = "Error while submitting deployment deletion: {}".format(resp.message)
                 )
 
-    def cleanup(self):
+    def cleanup(self, all_devices : bool = False):
         """
         Cleans up the tenant security configuration by clearing the main ingress names
         for all devices except the default device.
         """
+        if all_devices:
+            for device_name, device_data in self.global_view.get_all_devices().items():
+                try:
+                    if device_data["category"] == InfrastructureDeviceCategories.EDGE_DEVICE.value:
+                        self.logger.info("Skipping edge device {} cleanup because of LAG freeze bug.".format(device_name))
+                    else:
+                        self.logger.info("Cleaning up device: " + device_name)
+                        # Degrade device if possible (e.g., set links down)
+                        self.set_state_for_device_on_edge_devices(device_name, False)
+                        # Try to cleanup device by using local OMuProCU
+                        with grpc.insecure_channel(device_data["OMuProCUAddress"]) as channel:
+                                stub = DeploymentCommunicatorStub(channel)
+                                resp : DeploymentResponse = stub.Cleanup(DeploymentRequest())
+                                if resp.status == 200:
+                                    self.logger.debug("Cleanup request submitted successfully.")
+                                else:
+                                    self.logger.error("Error while submitting cleanup request: {}".format(resp.message))
+                        # Upgrade device again if possible (e.g., set links up)
+                        self.set_state_for_device_on_edge_devices(device_name, True)
+                except grpc.RpcError as err:
+                    if err.code() == grpc.StatusCode.UNAVAILABLE:
+                        self.logger.error("Could not connect to " + device_name + ": not reachable")
+                    else:
+                        self.logger.error("Could not call gRPC to " + device_name + ": " + str(err))
+                except Exception as ex:
+                    self.logger.exception(ex)
         self.load_tenant_security_config()
         for tenantId in self.tenant_security_config.keys():
             for device_name, device_metadata in self.tenant_security_config[tenantId]["devices"].items():
@@ -911,9 +979,26 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
             If there is an error during deployment creation, returns an MDDeploymentResponse object with status 500 and an error message.
             If the MD-TDC is invalid, returns an MDDeploymentResponse object with status 400 and an error message.
         """
-        
+        if self.rollout_lock.locked():
+            return MDDeploymentResponse(
+                status = 500,
+                message = "Rollout is currently running. Please try again later."
+            )
+        deployment_submission_timestamp = time.time()
         if self.validator.validate(deployment=request.mdtdc_raw):
+            validation_end_timestamp = time.time()
             try:
+                self.deployment_timestamps.update({
+                    "{}-{}".format(self.validator.mdtdc_id, self.validator.mdtdc_name) : {
+                        "deploymentType": "CREATE",
+                        "submissionTimestamp": deployment_submission_timestamp,
+                        "validationEndTimestamp": validation_end_timestamp,
+                        "scheduleTimestamp" : None,
+                        "deploymentStart": None,
+                        "deploymentEnd": None,
+                        "nodes": {}
+                    }
+                })
                 return self.schedule_mdtdc(self.validator.mdtdc, UPDATE_ACTION_CREATE)
             except Exception as ex:
                 self.logger.exception(ex)
@@ -939,7 +1024,25 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
             If the MD-TDC deployment is successfully validated, the function schedules the update action and returns the response.
             Otherwise, it returns an error response with the appropriate status code and message.
         """
+        if self.rollout_lock.locked():
+            return MDDeploymentResponse(
+                status = 500,
+                message = "Rollout is currently running. Please try again later."
+            )
+        deployment_submission_timestamp = time.time()
         if self.validator.validate(deployment=request.mdtdc_raw, update_request=True):
+            validation_end_timestamp = time.time()
+            self.deployment_timestamps.update({
+                    "{}-{}".format(self.validator.mdtdc_id, self.validator.mdtdc_name) : {
+                        "deploymentType": "UPDATE",
+                        "submissionTimestamp": deployment_submission_timestamp,
+                        "validationEndTimestamp": validation_end_timestamp,
+                        "scheduleTimestamp" : None,
+                        "deploymentStart": None,
+                        "deploymentEnd": None,
+                        "nodes": {}
+                    }
+            })
             return self.schedule_mdtdc(self.validator.mdtdc, UPDATE_ACTION_UPDATE)
         else: 
             return MDDeploymentResponse(
@@ -959,7 +1062,25 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
             If the MD-TDC deployment is successfully deleted, returns the scheduled MD-TDC deployment response.
             If the MD-TDC deployment fails validation, returns an error response with status code 400 and an error message.
         """
+        if self.rollout_lock.locked():
+            return MDDeploymentResponse(
+                status = 500,
+                message = "Rollout is currently running. Please try again later."
+            )
+        deployment_submission_timestamp = time.time()
         if self.validator.validate(deployment=request.mdtdc_raw, delete_request=True):
+            validation_end_timestamp = time.time()
+            self.deployment_timestamps.update({
+                    "{}-{}".format(self.validator.mdtdc_id, self.validator.mdtdc_name) : {
+                        "deploymentType": "DELETE",
+                        "submissionTimestamp": deployment_submission_timestamp,
+                        "validationEndTimestamp": validation_end_timestamp,
+                        "scheduleTimestamp" : None,
+                        "deploymentStart": None,
+                        "deploymentEnd": None,
+                        "nodes": {}
+                    }
+            })
             return self.schedule_mdtdc(self.validator.mdtdc, UPDATE_ACTION_DELETE)
         else: 
             return MDDeploymentResponse(
@@ -978,8 +1099,40 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
         Returns:
             The response after cleaning up the resources.
         """
-        return super().Cleanup(request, context)
+        if self.rollout_lock.locked():
+            return MDDeploymentResponse(
+                status = 500,
+                message = "Rollout is currently running. Please try again later."
+            )
+        try:
+            self.cleanup(all_devices=True)
+            return MDDeploymentResponse(
+                status = 200,
+                message = "Cleanup successful."
+            )
+        except Exception as ex:
+            self.logger.exception(ex)
+            return MDDeploymentResponse(
+                status = 500,
+                message = "Error while cleaning up."
+            )
     
+    def CheckHealth(self, request, context):
+        """
+        Checks the health of the management process.
+
+        Args:
+            request: The health check request.
+            context: The context of the health check.
+
+        Returns:
+            The health check response.
+        """
+        return MDDeploymentResponse(
+            status = 200,
+            message = "Global View is healthy." 
+        )
+
     def GetDeviceNode(self, request, context):
         """
         Retrieves the device node from the global view based on the given request.
@@ -1228,6 +1381,293 @@ class ManagementProcess(Process, MDDeploymentCommunicatorServicer, TopologyUpdat
             )]
         )
     
+    def CreateRule(self, request, context):
+        """
+        Creates a rule in the global view.
+
+        Args:
+            request: The request object containing the rule information.
+            context: The context object for the gRPC communication.
+
+        Returns:
+            A TopologyUpdateResponse object containing the status of the rule creation.
+        """
+        try:
+            for i, device_rule_request in enumerate(request.tifControlRequests):
+                device_name = request.infrastructureDeviceNames[i]
+                if request.infrastructureDeviceNames[i] not in self.global_view.get_all_devices():
+                    return TopologyUpdateResponse(
+                        status = 404,
+                        message = "Device {} not found in the global view.".format(device_name)
+                    )
+                tif_control_request = device_rule_request
+                scheduled_for_create = {}
+                scheduled_for_create["runtime_rules"] = []
+                if tif_control_request.runtimeRules:
+                    if len(tif_control_request.runtimeRules) > 0:
+                        for runtime_rule in tif_control_request.runtimeRules:
+                            self.global_view.add_tenant_table_entry(device_name, runtime_rule.table, runtime_rule.matches, runtime_rule.actionName, runtime_rule.actionParams)
+                            scheduled_for_create["runtime_rules"].append(runtime_rule)
+                    # Update rule in the topology if it is a provider rule
+                scheduled_for_create["nexthop_map"] = []
+                if tif_control_request.nexthopMapEntries:
+                    if len(tif_control_request.nexthopMapEntries) > 0:
+                        # FIXME: This does not work this way! The nexthopMap entries have different structure!
+                        for next_hop_entry in tif_control_request.nexthopMapEntries:
+                            self.global_view.set_device_routing_table_configuration_entry(device_name, "nexthopMap", next_hop_entry.key, next_hop_entry.nextHopId)
+                            scheduled_for_create["nexthop_map"].append(next_hop_entry)
+                scheduled_for_create["arp_table_host_entries"] = []
+                if tif_control_request.arpHostEntries:
+                    if len(tif_control_request.arpHostEntries) > 0:
+                        for arp_host_entry in tif_control_request.arpHostEntries:
+                            self.global_view.set_device_routing_table_configuration_entry(device_name, "arpTableHostEntries", "ip", arp_host_entry.key, arp_host_entry.nextHopId)
+                            scheduled_for_create["arp_table_host_entries"].append(arp_host_entry)
+                scheduled_for_create["ipv4_host_entries"] = []
+                if tif_control_request.ipv4HostEntries:
+                    if len(tif_control_request.ipv4HostEntries) > 0:
+                        for ipv4_host_entry in tif_control_request.ipv4HostEntries:
+                            self.global_view.set_device_routing_table_configuration_entry(device_name, "ipv4HostEntries", "ip", ipv4_host_entry.key, ipv4_host_entry.nextHopId)
+                            scheduled_for_create["ipv4_host_entries"].append(ipv4_host_entry)
+                with grpc.insecure_channel(self.global_view.get_device_node(device_name)["OMuProCUAddress"].split(":")[0] + ":49056") as channel:
+                    stub = RulesUpdaterCommunicatorStub(channel)
+                    resp: TIFControlResponse = stub.CreateRules(
+                        TIFControlRequest(
+                                runtimeRules=scheduled_for_create["runtime_rules"],
+                                nexthopMapEntries=scheduled_for_create["nexthop_map"],
+                                arpHostEntries=scheduled_for_create["arp_table_host_entries"],
+                                ipv4HostEntries=scheduled_for_create["ipv4_host_entries"]
+                        )
+                    )
+                    if resp.status == 200:
+                        self.logger.debug("Rule(s) created successfully on device {}".format(device_name))
+                    else:
+                        self.logger.error("Error while creating rule on device {}: {}".format(device_name, resp.message))
+                        return TopologyUpdateResponse(
+                            status = 500,
+                            message = "Error while creating rule on device {}: {}".format(device_name, resp.message)
+                        )
+            return TopologyUpdateResponse(
+                status = 200,
+                message = "Rules created successfully"
+            )
+        except Exception as ex:
+            self.logger.exception(ex)
+            return TopologyUpdateResponse(
+                status = 500,
+                message = "Error while creating rules: {}".format(str(ex))
+            )
+
+    def UpdateRule(self, request, context):
+        """
+        Updates a rule in the global view.
+
+        Args:
+            request: The request object containing the rule information.
+            context: The context object for the gRPC communication.
+
+        Returns:
+            A TopologyUpdateResponse object containing the status of the rule update.
+        """
+        try:
+            for i, device_rule_request in enumerate(request.tifControlRequests):
+                device_name = request.infrastructureDeviceNames[i]
+                if request.infrastructureDeviceNames[i] not in self.global_view.get_all_devices():
+                    return TopologyUpdateResponse(
+                        status = 404,
+                        message = "Device {} not found in the global view.".format(device_name)
+                    )
+                tif_control_request = device_rule_request
+                scheduled_for_update = {}
+                scheduled_for_update["runtime_rules"] = []
+                if tif_control_request.runtimeRules:
+                    if len(tif_control_request.runtimeRules) > 0:
+                        for runtime_rule in tif_control_request.runtimeRules:
+                            if self.global_view.is_entry_in_tenant_table(device_name, runtime_rule.table, runtime_rule.matches):
+                                self.global_view.set_tenant_table_entry(device_name, runtime_rule.table, runtime_rule.matches, runtime_rule.actionName, runtime_rule.actionParams)
+                            else:
+                                self.global_view.add_tenant_table_entry(device_name, runtime_rule.table, runtime_rule.matches, runtime_rule.actionName, runtime_rule.actionParams)
+                            scheduled_for_update["runtime_rules"].append(runtime_rule)
+                scheduled_for_update["nexthop_map"] = []
+                # Update rule in the topology if it is a provider rule
+                if tif_control_request.nexthopMapEntries:
+                    if len(tif_control_request.nexthopMapEntries) > 0:
+                        # FIXME: This does not work this way! The nexthopMap entries have different structure!
+                        for next_hop_entry in tif_control_request.nexthopMapEntries:
+                            self.global_view.set_device_routing_table_configuration_entry(device_name, "nexthopMap", next_hop_entry.key, next_hop_entry.nextHopId)
+                            scheduled_for_update["nexthop_map"].append(next_hop_entry)
+                scheduled_for_update["arp_table_host_entries"] = []
+                if tif_control_request.arpHostEntries:
+                    if len(tif_control_request.arpHostEntries) > 0:
+                        for arp_host_entry in tif_control_request.arpHostEntries:
+                            self.global_view.set_device_routing_table_configuration_entry(device_name, "arpTableHostEntries", "ip", arp_host_entry.key, arp_host_entry.nextHopId)
+                            scheduled_for_update["arp_table_host_entries"].append(arp_host_entry)
+                scheduled_for_update["ipv4_host_entries"] = []
+                if tif_control_request.ipv4HostEntries:
+                    if len(tif_control_request.ipv4HostEntries) > 0:
+                        for ipv4_host_entry in tif_control_request.ipv4HostEntries:
+                            self.global_view.set_device_routing_table_configuration_entry(device_name, "ipv4HostEntries", "ip", ipv4_host_entry.key, ipv4_host_entry.nextHopId)
+                            scheduled_for_update["ipv4_host_entries"].append(ipv4_host_entry)
+                with grpc.insecure_channel(self.global_view.get_device_node(device_name)["OMuProCUAddress"].split(":")[0] + ":49056") as channel:
+                    stub = RulesUpdaterCommunicatorStub(channel)
+                    resp : TIFControlResponse = stub.UpdateRules(
+                        TIFControlRequest(
+                            runtimeRules=scheduled_for_update["runtime_rules"],
+                            nexthopMapEntries=scheduled_for_update["nexthop_map"],
+                            arpHostEntries=scheduled_for_update["arp_table_host_entries"],
+                            ipv4HostEntries=scheduled_for_update["ipv4_host_entries"]
+                        )
+                    )
+                    if resp.status == 200:
+                        self.logger.debug("Rule updated successfully on device {}".format(device_name))
+                    else:
+                        self.logger.error("Error while updating rule on device {}: {}".format(device_name, resp.message))
+                        return TopologyUpdateResponse(
+                            status = 500,
+                            message = "Error while updating rule on device {}: {}".format(device_name, resp.message)
+                        )
+            return TopologyUpdateResponse(
+                status = 200,
+                message = "Rules updated successfully"
+            )
+        except Exception as ex:
+            self.logger.exception(ex)
+            return TopologyUpdateResponse(
+                status = 500,
+                message = "Error while updating rules: {}".format(str(ex))
+            )
+        
+    def DeleteRule(self, request, context):
+        """
+        Deletes a rule in the global view.
+
+        Args:
+            request: The request object containing the rule information.
+            context: The context object for the gRPC communication.
+
+        Returns:
+            A TopologyUpdateResponse object containing the status of the rule deletion.
+        """
+        try:
+            for i, device_rule_request in enumerate(request.tifControlRequests):
+                device_name = request.infrastructureDeviceNames[i]
+                if request.infrastructureDeviceNames[i] not in self.global_view.get_all_devices():
+                    return TopologyUpdateResponse(
+                        status = 404,
+                        message = "Device {} not found in the global view.".format(device_name)
+                    )
+                tif_control_request = device_rule_request
+                scheduled_for_delete = {}
+                scheduled_for_delete["runtime_rules"] = []
+                if tif_control_request.runtimeRules:
+                    if len(tif_control_request.runtimeRules) > 0:
+                        for runtime_rule in tif_control_request.runtimeRules:
+                            if self.global_view.is_entry_in_tenant_table(device_name, runtime_rule.table, runtime_rule.matches):
+                                self.global_view.delete_tenant_table_entry(device_name, runtime_rule.table, runtime_rule.matches)
+                                scheduled_for_delete["runtime_rules"].append(runtime_rule)
+                # Update rule in the topology if it is a provider rule
+                scheduled_for_delete["nexthop_map"] = []
+                if tif_control_request.nexthopMapEntries:
+                    if len(tif_control_request.nexthopMapEntries) > 0:
+                        # FIXME: This does not work this way! The nexthopMap entries have different structure!
+                        for next_hop_entry in tif_control_request.nexthopMapEntries:
+                            if self.global_view.delete_device_routing_table_configuration_entry(device_name, "nexthopMap", "ip", next_hop_entry.key):
+                                scheduled_for_delete["nexthop_map"].append(next_hop_entry)
+                scheduled_for_delete["arp_table_host_entries"] = []
+                if tif_control_request.arpHostEntries:
+                    if len(tif_control_request.arpHostEntries) > 0:
+                        for arp_host_entry in tif_control_request.arpHostEntries:
+                            if self.global_view.delete_device_routing_table_configuration_entry(device_name, "arpTableHostEntries", "ip", arp_host_entry.key):
+                                scheduled_for_delete["arp_table_host_entries"].append(arp_host_entry)
+                scheduled_for_delete["ipv4_host_entries"] = []
+                if tif_control_request.ipv4HostEntries:
+                    if len(tif_control_request.ipv4HostEntries) > 0:
+                        for ipv4_host_entry in tif_control_request.ipv4HostEntries:
+                            if self.global_view.delete_device_routing_table_configuration_entry(device_name, "ipv4HostEntries", "ip", ipv4_host_entry.key):
+                                scheduled_for_delete["ipv4_host_entries"].append(ipv4_host_entry)
+                with grpc.insecure_channel(self.global_view.get_device_node(device_name)["OMuProCUAddress"].split(":")[0] + ":49056") as channel:
+                    stub = RulesUpdaterCommunicatorStub(channel)
+                    resp : TIFControlResponse = stub.DeleteRules(
+                        TIFControlRequest(
+                            runtimeRules=scheduled_for_delete["runtime_rules"],
+                            nexthopMapEntries=scheduled_for_delete["nexthop_map"],
+                            arpHostEntries=scheduled_for_delete["arp_table_host_entries"],
+                            ipv4HostEntries=scheduled_for_delete["ipv4_host_entries"]
+                        )
+                    )
+                    if resp.status == 200:
+                        self.logger.debug("Rule deleted successfully on device {}".format(device_name))
+                    else:
+                        self.logger.error("Error while deleting rule on device {}: {}".format(device_name, resp.message))
+                        return TopologyUpdateResponse(
+                            status = 500,
+                            message = "Error while deleting rule on device {}: {}".format(device_name, resp.message)
+                        )
+            return TopologyUpdateResponse(
+                status = 200,
+                message = "Rules deleted successfully"
+            )
+        except Exception as ex:
+            self.logger.exception(ex)
+            return TopologyUpdateResponse(
+                status = 500,
+                message = "Error while deleting rules: {}".format(str(ex))
+            )
+
+    def GetRule(self, request, context):
+        """
+        Retrieves a rule from the global view.
+
+        Args:
+            request: The request object containing the rule information.
+            context: The context object for the gRPC communication.
+
+        Returns:
+            A TopologyUpdateResponse object containing the rule information.
+        """
+        try:
+            for i, device_rule_request in enumerate(request.tifControlRequests):
+                device_name = request.infrastructureDeviceNames[i]
+                if request.infrastructureDeviceNames[i] not in self.global_view.get_all_devices():
+                    return TopologyUpdateResponse(
+                        status = 404,
+                        message = "Device {} not found in the global view.".format(device_name)
+                    )
+                tif_control_request = device_rule_request.tifControlRequests[i]
+                runtime_rules = []
+                if len(tif_control_request.runtimeRules) > 0:
+                    for runtime_rule in tif_control_request.runtimeRules:
+                        runtime_rules.append(self.global_view.get_device_routing_table_configuration_entry(device_name, "runtime_rules", runtime_rule.key))
+                nexthop_map = []
+                if len(tif_control_request.nextHopEntries) > 0:
+                    for next_hop_entry in tif_control_request.nextHopEntries:
+                        nexthop_map.append(self.global_view.get_device_routing_table_configuration_entry(device_name, "nexthop_map", next_hop_entry.key))
+                arp_table_host_entries = []
+                if len(tif_control_request.arpHostEntries) > 0:
+                    for arp_host_entry in tif_control_request.arpHostEntries:
+                        arp_table_host_entries.append(self.global_view.get_device_routing_table_configuration_entry(device_name, "arp_table_host_entries", arp_host_entry.key))
+                ipv4_host_entries = []
+                if len(tif_control_request.ipv4HostEntries) > 0:
+                    for ipv4_host_entry in tif_control_request.ipv4HostEntries:
+                        ipv4_host_entries.append(self.global_view.get_device_routing_table_configuration_entry(device_name, "ipv4_host_entries", ipv4_host_entry.key))
+                return TopologyUpdateResponse(
+                    status = 200,
+                    message = "",
+                    tifControlResponses = [
+                        TIFControlResponse(
+                            runtimeRules=runtime_rules,
+                            nextHopEntries=nexthop_map,
+                            arpHostEntries=arp_table_host_entries,
+                            ipv4HostEntries=ipv4_host_entries
+                        )
+                    ]
+                )
+        except Exception as ex:
+            self.logger.exception(ex)
+            return TopologyUpdateResponse(
+                status = 500,
+                message = "Error while retrieving rules: {}".format(str(ex))
+            )
+
     def set_state_for_device_on_edge_devices(self, device: str, state: bool):
         """
         Sets the state for a specific device on edge devices.
