@@ -2,7 +2,7 @@
 
 This repository contains the source code for global management plane of [OMuProCU Core](https://github.com/tiritor/OMuProCU-core). The whole project can be seen [here](https://github.com/tiritor/OMuProCU)
 
-This part of the framework is used in the paper [`Orchestrating Multi-Tenant Code Updates Across Multiple Programmable Switches`](https://ieeexplore.ieee.org/document/10575368) and `Resilient Multi-Tenant Code Updates for Adaptive Network State Changes`.
+This part of the framework is used in the paper [`Orchestrating Multi-Tenant Code Updates Across Multiple Programmable Switches`](https://ieeexplore.ieee.org/document/10575368) and `Resilient Multi-Tenant Network Programmability for Adaptive Service Placement`.
 
 ## Disclaimer
 
@@ -105,7 +105,7 @@ There are three different categories available:
 There are multiple topology files in the [config](conf/) directory available:
 
 - [LAG setup](conf/topology-lag.json) (as used in the paper [`Orchestrating Multi-Tenant Code Updates Across Multiple Programmable Switches`](https://ieeexplore.ieee.org/document/10575368))
-- [5G evaluation setup ](conf/topology-5G.json) **[default]** (as used in the paper `Resilient Multi-Tenant Code Updates for Adaptive Network State Changes`)
+- [5G evaluation setup ](conf/topology-5G.json) **[default]** (as used in the paper `Resilient Multi-Tenant Network Programmability for Adaptive Service Placement`)
 
 
 ### [config.py](conf/config.py)
