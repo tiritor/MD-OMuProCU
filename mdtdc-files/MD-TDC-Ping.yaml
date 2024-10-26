@@ -52,16 +52,22 @@ TDCs:
             match: "{'hdr.ipv4.dstAddr': '10.100.0.200'}" # match with start point in its p4 code! 
             # match: "{'hdr.inner_ipv4.dstAddr': '10.100.0.200'}" # match with start point in its p4 code! 
             actionParams: "{}" # action params with start point in its p4 code!
-          - mode: 'table_add'
-            table: 'PingerIngress.listenerMAC' # table name with start point in its p4 code!
-            actionName: 'NoAction' # action name with start point in its p4 code!
-            match: "{'hdr.inner_ethernet.dstAddr': 'AA:AA:AA:AA:AA:AA'}" # match with start point in its p4 code! 
-            actionParams: "{}" # action params with start point in its p4 code!
-          - mode: 'table_add'
-            table: 'PingerIngress.listenerMAC' # table name with start point in its p4 code!
-            actionName: 'NoAction' # action name with start point in its p4 code!
-            match: "{'hdr.inner_ethernet.dstAddr': 'FF:FF:FF:FF:FF:FF'}" # match with start point in its p4 code! 
-            actionParams: "{}" # action params with start point in its p4 code!
+          # - mode: 'table_add'
+          #   table: 'PingerIngress.vxlanIps' # table name with start point in its p4 code!
+          #   actionName: 'send_udp_reply' # action name with start point in its p4 code!
+          #   match: "{'hdr.ipv4.dstAddr': '10.100.0.200'}" # match with start point in its p4 code! 
+          #   # match: "{'hdr.inner_ipv4.dstAddr': '10.100.0.200'}" # match with start point in its p4 code! 
+          #   actionParams: "{}" # action params with start point in its p4 code!
+          # - mode: 'table_add'
+          #   table: 'PingerIngress.listenerMAC' # table name with start point in its p4 code!
+          #   actionName: 'NoAction' # action name with start point in its p4 code!
+          #   match: "{'hdr.inner_ethernet.dstAddr': 'AA:AA:AA:AA:AA:AA'}" # match with start point in its p4 code! 
+          #   actionParams: "{}" # action params with start point in its p4 code!
+          # - mode: 'table_add'
+          #   table: 'PingerIngress.listenerMAC' # table name with start point in its p4 code!
+          #   actionName: 'NoAction' # action name with start point in its p4 code!
+          #   match: "{'hdr.inner_ethernet.dstAddr': 'FF:FF:FF:FF:FF:FF'}" # match with start point in its p4 code! 
+          #   actionParams: "{}" # action params with start point in its p4 code!
       INC: # in-network code of tenant 
         p4Code: |
           /*************************************************************************
@@ -87,6 +93,7 @@ TDCs:
               DirectCounter<bit<32>>(CounterType_t.PACKETS) debug_counter;
               DirectCounter<bit<32>>(CounterType_t.PACKETS) debug2_counter;
               DirectCounter<bit<32>>(CounterType_t.PACKETS) debug3_counter;
+              DirectCounter<bit<32>>(CounterType_t.PACKETS) debug4_counter;
 
               action send_back() {
                   ig_tm_md.ucast_egress_port = ig_intr_md.ingress_port;
@@ -94,11 +101,29 @@ TDCs:
 
               action send_ping_reply() {
                   debug2_counter.count();
+                  mac_address_t eth = hdr.ethernet.src_addr;
+                  hdr.ethernet.src_addr = hdr.ethernet.dst_addr;
+                  hdr.ethernet.dst_addr = eth;
+
+                  // hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+                  ipv4_address_t ip = hdr.ipv4.src_addr;
+                  hdr.ipv4.src_addr = hdr.ipv4.dst_addr;
+                  hdr.ipv4.dst_addr = ip;
+
+                  hdr.icmp.type = 0;
+                  hdr.icmp.code = 0;
+                  hdr.icmp.checksum = 0;
+
+                  send_back();
+              }
+
+              action send_inner_ping_reply() {
+                  debug3_counter.count();
                   mac_address_t eth = hdr.inner_ethernet.src_addr;
                   hdr.inner_ethernet.src_addr = hdr.inner_ethernet.dst_addr;
                   hdr.inner_ethernet.dst_addr = eth;
 
-                  hdr.inner_ipv4.ttl = hdr.inner_ipv4.ttl - 1;
+                  // hdr.inner_ipv4.ttl = hdr.inner_ipv4.ttl - 1;
                   ipv4_address_t ip = hdr.inner_ipv4.src_addr;
                   hdr.inner_ipv4.src_addr = hdr.inner_ipv4.dst_addr;
                   hdr.inner_ipv4.dst_addr = ip;
@@ -106,6 +131,47 @@ TDCs:
                   hdr.inner_icmp.type = 0;
                   hdr.inner_icmp.code = 0;
                   hdr.inner_icmp.checksum = 0;
+
+                  send_back();
+              }
+
+              action send_udp_reply() {
+                  debug2_counter.count();
+                  mac_address_t eth = hdr.ethernet.src_addr;
+                  hdr.ethernet.src_addr = hdr.ethernet.dst_addr;
+                  hdr.ethernet.dst_addr = eth;
+
+                  // hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+                  ipv4_address_t ip = hdr.ipv4.src_addr;
+                  hdr.ipv4.src_addr = hdr.ipv4.dst_addr;
+                  hdr.ipv4.dst_addr = ip;
+
+                  // hdr.udp.checksum = 0;
+                  l4_port_t port = hdr.udp.src_port;
+                  hdr.udp.src_port = hdr.udp.dst_port;
+                  hdr.udp.dst_port = port;
+                  hdr.udp_application.type = 1;
+
+                  send_back();
+              }
+
+              action send_inner_udp_reply() {
+                  debug3_counter.count();
+                  mac_address_t eth = hdr.inner_ethernet.src_addr;
+                  hdr.inner_ethernet.src_addr = hdr.inner_ethernet.dst_addr;
+                  hdr.inner_ethernet.dst_addr = eth;
+
+                  // hdr.inner_ipv4.ttl = hdr.inner_ipv4.ttl - 1;
+                  ipv4_address_t ip = hdr.inner_ipv4.src_addr;
+                  hdr.inner_ipv4.src_addr = hdr.inner_ipv4.dst_addr;
+                  hdr.inner_ipv4.dst_addr = ip;
+
+                  hdr.inner_udp.checksum = 0;
+                  l4_port_t port = hdr.inner_udp.src_port;
+                  hdr.inner_udp.src_port = hdr.inner_udp.dst_port;
+                  hdr.inner_udp.dst_port = port;
+                  
+                  hdr.udp_application.type = 1;
 
                   send_back();
               }
@@ -146,11 +212,11 @@ TDCs:
 
               action send_vxlan_reply () {
                   // hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
-                  debug3_counter.count();
+                  debug4_counter.count();
                   ipv4_address_t ip = hdr.ipv4.src_addr;
                   hdr.ipv4.src_addr = hdr.ipv4.dst_addr;
                   hdr.ipv4.dst_addr = ip;
-                  hdr.udp.checksum = 0;
+                  //hdr.udp.checksum = 0;
                   hdr.udp.src_port = 45875;
                   hdr.udp.dst_port = 4789;
                   
@@ -160,21 +226,46 @@ TDCs:
 
                   send_back();
               }
-                                  
+
               table listenerIps {
+                  key = {
+                    hdr.ipv4.dst_addr : exact;
+                    hdr.icmp.isValid() : exact;
+                    hdr.icmp.type : ternary;
+                    hdr.udp.isValid() : exact;
+                    hdr.udp.dst_port : ternary;
+                  }
+                  actions = {
+                    send_ping_reply;
+                    send_udp_reply;
+                  }
+                  const entries = {
+                      (PINGER_HOST_IP_ADDRESS, true, 8, false, _): send_ping_reply();
+                      (PINGER_HOST_IP_ADDRESS, false, _, true, 8080): send_udp_reply();
+                  }
+                  size = 8;
+                  counters = debug2_counter;
+                  // default_action = NoAction();
+              }
+                                  
+              table listenerVxlanIps {
                   key = {
                     hdr.inner_ipv4.dst_addr : exact;
                     hdr.inner_icmp.isValid() : exact;
                     hdr.inner_icmp.type : ternary;
+                    hdr.inner_udp.isValid() : exact;
+                    hdr.inner_udp.dst_port : ternary;
                   }
                   actions = {
-                    send_ping_reply;
+                    send_inner_ping_reply;
+                    send_inner_udp_reply;
                   }
                   const entries = {
-                      (PINGER_IP_ADDRESS, true, 8): send_ping_reply();
+                      (PINGER_IP_ADDRESS, true, 8, false, _): send_inner_ping_reply();
+                      (PINGER_IP_ADDRESS, false, _, true, 8080): send_inner_udp_reply();
                   }
                   size = 8;
-                  counters = debug2_counter;
+                  counters = debug3_counter;
                   # default_action = NoAction();
               }
 
@@ -188,26 +279,26 @@ TDCs:
                   // const entries = {
                   //     (PINGER_IP_ADDRESS): NoAction();
                   // };
-                  counters = debug3_counter;
+                  counters = debug4_counter;
                   size = 8;
                   // default_action = NoAction();
               }
 
-              table listenerMAC {
-                  key = {
-                    hdr.inner_ethernet.dst_addr : exact;
-                  }
-                  actions = {
-                    NoAction;
-                  }
-                  // const_entries = {
-                  //     (0xFF): NoAction();
-                  //     (PINGER_MAC_ADDRESS): NoAction();
-                  // };
-                  size = 8;
-                  // counters = debug2_counter;
-                  default_action = NoAction();
-              }
+              // table listenerMAC {
+              //     key = {
+              //       hdr.inner_ethernet.dst_addr : exact;
+              //     }
+              //     actions = {
+              //       NoAction;
+              //     }
+              //     // const_entries = {
+              //     //     (0xFF): NoAction();
+              //     //     (PINGER_MAC_ADDRESS): NoAction();
+              //     // };
+              //     size = 8;
+              //     // counters = debug2_counter;
+              //     default_action = NoAction();
+              // }
 
               table arp {
                   key = {
@@ -231,37 +322,19 @@ TDCs:
               }
 
               apply {
-                  // Check if dest MAC address is PINGER MAC Address or Broadcast
-                  // FIXME: This should be the better solution!
-                  // if (hdr.arp.isValid() && hdr.arp.op == ARP_OPCODE_REQUEST && hdr.arp.targetIpAddr == PINGER_IP_ADDRESS) {
-                  // if (hdr.arp.op == ARP_OPCODE_REQUEST && hdr.arp.targetIpAddr == PINGER_IP_ADDRESS) {
-                  //     // Send ARP reply
-                  //     send_arp_reply();
-                  // }
-                  arp.apply();
-                  if (listenerMAC.apply().hit) {
-                      // debug2_counter.count();
-                      // if (hdr.ipv4.isValid()) {
-                          // Check if dest IP address is PINGER IP Address
-                          vxlanIps.apply();
-                          if (hdr.inner_ipv4.isValid()) {
-                              // Check if dest IP address is PINGER IP Address
-                              listenerIps.apply();
-                              //if (listenerIps.apply().hit) {
-                                  // Send pong packet
-                                  // if(hdr.inner_icmp.isValid() && hdr.inner_icmp.type == 8) {
-                                  //     send_ping_reply();
-                                  //     }
-                              //}
-                          }
-                              // else if (hdr.inner_arp.isValid()) {
-                              //     // Send ARP reply
-                              //     send_inner_arp_reply();
-                              // } 
-                              // send_vxlan_reply();
-                          
-                      // }
-                  }
+                // Check if dest MAC address is PINGER MAC Address or Broadcast
+                // FIXME: This should be the better solution!
+                arp.apply();
+                // debug2_counter.count();
+                if (!listenerIps.apply().hit) {
+                    // Check if dest IP address is PINGER IP Address
+                    vxlanIps.apply();
+                    if (hdr.inner_ipv4.isValid()) {
+                        // Check if dest IP address is PINGER IP Address
+                        listenerVxlanIps.apply();
+                        meta.tenant_meta.export_flag = 1;
+                    }                      
+                }
               }
           }
           #endif // __PINGER__

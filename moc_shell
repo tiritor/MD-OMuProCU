@@ -18,6 +18,7 @@ from conf.config import DEPLOYMENT_ADDRESS
 DEPLOYMENT_ADDRESS = "127.0.0.1:" + DEPLOYMENT_ADDRESS.split(":")[-1]
 OMUPROCU_CLIENT_LOG_LEVEL = logging.INFO
 
+PROCESSING_TIME_PATH = "moc_shell_timetracking.csv"
 
 font_colors = {
     'PURPLE': "\x1b[35m",
@@ -62,8 +63,11 @@ class MOCShell(cmd.Cmd):
         super().__init__(completekey, stdin, stdout)
         if timetracking:
             self.timetracking = True
-            self.timetracking_file = open("moc_shell_timetracking.csv", "w")
-            self.timetracking_file.write("Command,Processing Time\n")
+            if os.path.exists(PROCESSING_TIME_PATH):
+                self.timetracking_file = open(PROCESSING_TIME_PATH, "a")
+            else: 
+                self.timetracking_file = open(PROCESSING_TIME_PATH, "w")
+                self.timetracking_file.write("Timestamp,Command,Processing Time\n")
         else:
             self.timetracking = False
 
@@ -90,6 +94,7 @@ class MOCShell(cmd.Cmd):
         'Exit the shell:  EXIT'
         print('Stopping MD-OMuProCU-Client...')
         if self.timetracking:
+            self.timetracking_file.flush()
             self.timetracking_file.close()
         return True
     
@@ -113,12 +118,18 @@ class MOCShell(cmd.Cmd):
 
     def do_connectivity(self, arg):
         'Check the connectivity to the orchestrator:  CONNECTIVITY'
+        start_time = time.time()
         print('Checking connectivity...')
         try:
             client = MDOMuProCUClient(DEPLOYMENT_ADDRESS, OMUPROCU_CLIENT_LOG_LEVEL)
             resp : MDDeploymentResponse = client.check_health()
             if resp.status == 200:
-                success_print("Connectivity to " + DEPLOYMENT_ADDRESS + " is OK")
+                processing_time = time.time() - start_time
+                success_print("Connectivity to " + DEPLOYMENT_ADDRESS + " is OK (Processing time: {:.2f} seconds)".format(processing_time))
+                print()
+                if self.timetracking:
+                    timestamp = time.time()
+                    self.timetracking_file.write(f"{timestamp},CONNECTIVITY,{processing_time}\n")
             else:
                 warn_print("Connectivity to " + DEPLOYMENT_ADDRESS + " is NOT OK")
         except grpc.RpcError as err:
@@ -290,7 +301,8 @@ class MOCShell(cmd.Cmd):
                 processing_time = time.time() - self.start_time
                 success_print("Got provider table entry successfully (Processing time: {:.2f} seconds)".format(processing_time))
                 if self.timetracking:
-                    self.timetracking_file.write(f"PROVIDER_RULE_GET,{processing_time}\n")
+                    timestamp = time.time()
+                    self.timetracking_file.write(f"{timestamp},PROVIDER_RULE_GET,{processing_time}\n")
             except grpc.RpcError as err:
                 if err.code() == grpc.StatusCode.UNAVAILABLE:
                     err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
@@ -318,7 +330,8 @@ class MOCShell(cmd.Cmd):
                     processing_time = time.time() - self.start_time
                     success_print("Provider table entry created successfully (Processing time: {:.2f} seconds)".format(processing_time))
                     if self.timetracking:
-                        self.timetracking_file.write(f"PROVIDER_RULE_CREATE,{processing_time}\n")
+                        timestamp = time.time()
+                        self.timetracking_file.write(f"{timestamp},PROVIDER_RULE_CREATE,{processing_time}\n")
                 else:
                     err_print("Provider table entry creation failed: " + str(resp))
             except grpc.RpcError as err:
@@ -347,7 +360,8 @@ class MOCShell(cmd.Cmd):
                     processing_time = time.time() - self.start_time
                     success_print("Provider table entry updated successfully (Processing time: {:.2f} seconds)".format(processing_time))
                     if self.timetracking:
-                        self.timetracking_file.write(f"PROVIDER_RULE_UPDATE,{processing_time}\n")
+                        timestamp = time.time()
+                        self.timetracking_file.write(f"{timestamp},PROVIDER_RULE_UPDATE,{processing_time}\n")
                 else:
                     err_print("Provider table entry update failed: " + str(resp))
             except grpc.RpcError as err:
@@ -373,7 +387,9 @@ class MOCShell(cmd.Cmd):
                 if resp.status == 200:
                     processing_time = time.time() - self.start_time
                     success_print("Provider table entry deleted successfully (Processing time: {:.2f} seconds)".format(processing_time))
-                    self.timetracking_file.write(f"PROVIDER_RULE_DELETE,{processing_time}\n")
+                    if self.timetracking:
+                        timestamp = time.time()
+                        self.timetracking_file.write(f"{timestamp},PROVIDER_RULE_DELETE,{processing_time}\n")
                 else:
                     err_print("Provider table entry deletion failed: " + str(resp))
             except grpc.RpcError as err:
@@ -394,7 +410,8 @@ class MOCShell(cmd.Cmd):
             processing_time = time.time() - self.start_time
             success_print("Got tenant table entry successfully (Processing time: {:.2f} seconds)".format(processing_time))
             if self.timetracking:
-                self.timetracking_file.write(f"TENANT_RULE_GET,{processing_time}\n")
+                timestamp = time.time()
+                self.timetracking_file.write(f"{timestamp},TENANT_RULE_GET,{processing_time}\n")
         except grpc.RpcError as err:
             if err.code() == grpc.StatusCode.UNAVAILABLE:
                 err_print("Could not connect to " + DEPLOYMENT_ADDRESS + ": not reachable")
@@ -413,7 +430,8 @@ class MOCShell(cmd.Cmd):
                 processing_time = time.time() - self.start_time
                 success_print("Tenant table entry created successfully (Processing time: {:.2f} seconds)".format(processing_time))
                 if self.timetracking:
-                    self.timetracking_file.write(f"TENANT_RULE_CREATE,{processing_time}\n")
+                    timestamp = time.time()
+                    self.timetracking_file.write(f"{timestamp},TENANT_RULE_CREATE,{processing_time}\n")
             else:
                 err_print("Tenant table entry creation failed: " + str(resp))
         except grpc.RpcError as err:
@@ -433,7 +451,9 @@ class MOCShell(cmd.Cmd):
                 processing_time = time.time() - self.start_time
                 success_print("Tenant table entry updated successfully (Processing time: {:.2f} seconds)".format(processing_time))
                 if self.timetracking:
-                    self.timetracking_file.write(f"TENANT_RULE_UPDATE,{processing_time}\n")
+                    timestamp = time.time()
+                    self.timetracking_file.write(f"{timestamp},TENANT_RULE_UPDATE,{processing_time}\n")
+                    self.timetracking_file.flush()
             else:
                 err_print("Tenant table entry update failed: " + str(resp))
         except grpc.RpcError as err:
@@ -453,7 +473,9 @@ class MOCShell(cmd.Cmd):
                 processing_time = time.time() - self.start_time
                 success_print("Tenant table entry deleted successfully (Processing time: {:.2f} seconds)".format(processing_time))
                 if self.timetracking:
-                    self.timetracking_file.write(f"TENANT_RULE_DELETE,{processing_time}\n")
+                    timestamp = time.time()
+                    self.timetracking_file.write(f"{timestamp},TENANT_RULE_DELETE,{processing_time}\n")
+                    self.timetracking_file.flush()
             else:
                 err_print("Tenant table entry deletion failed: " + str(resp))
         except grpc.RpcError as err:
